@@ -28,6 +28,7 @@ import (
 
 	"github.com/cilium/cilium/common/addressing"
 	"github.com/cilium/cilium/pkg/endpointmanager"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/nodeaddress"
 	"github.com/cilium/cilium/pkg/policy"
 
@@ -68,7 +69,7 @@ type ProxySource interface {
 	GetID() uint64
 	RLock()
 	GetLabels() []string
-	GetIdentity() policy.NumericIdentity
+	GetIdentity() identity.NumericID
 	GetIPv4Address() string
 	GetIPv6Address() string
 	RUnlock()

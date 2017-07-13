@@ -16,10 +16,8 @@ package kvstore
 
 import (
 	"encoding/json"
-	"time"
 
 	"github.com/cilium/cilium/common/types"
-	"github.com/cilium/cilium/pkg/policy"
 )
 
 type KVClient interface {
@@ -30,12 +28,9 @@ type KVClient interface {
 	GetMaxID(key string, firstID uint32) (uint32, error)
 	SetMaxID(key string, firstID, maxID uint32) error
 
-	GASNewSecLabelID(baseKeyPath string, baseID uint32, secCtxLabels *policy.Identity) error
 	GASNewL3n4AddrID(basePath string, baseID uint32, lAddrID *types.L3n4AddrID) error
 
 	DeleteTree(path string) error
-
-	GetWatcher(key string, timeSleep time.Duration) <-chan []policy.NumericIdentity
 
 	Status() (string, error)
 

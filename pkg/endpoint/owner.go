@@ -15,6 +15,7 @@
 package endpoint
 
 import (
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/policy"
 )
@@ -48,13 +49,10 @@ type Owner interface {
 	GetConsumableCache() *policy.ConsumableCache
 
 	// Must resolve label id to an identiy
-	GetCachedLabelList(ID policy.NumericIdentity) (labels.LabelArray, error)
+	GetCachedLabelList(ID identity.NumericID) (labels.LabelArray, error)
 
 	// Must return the policy repository
 	GetPolicyRepository() *policy.Repository
-
-	// Return the next available global identity
-	GetCachedMaxLabelID() (policy.NumericIdentity, error)
 
 	// UpdateProxyRedirect must update the redirect configuration of an endpoint in the prox
 	UpdateProxyRedirect(e *Endpoint, l4 *policy.L4Filter) (uint16, error)
@@ -76,6 +74,16 @@ type Owner interface {
 
 	// Returns true if debugging has been enabled
 	DebugEnabled() bool
+
+	// RLockEndpoints must lock the endpoint manager so no endpoints can be
+	// added or removed
+	RLockEndpoints()
+
+	// Lookup must return the endpoint for a given identifier
+	LookupLocked(id uint16) *Endpoint
+
+	// RUnlockEndpoints must unlock the endpoint manager again
+	RUnlockEndpoints()
 }
 
 // Request is used to create the endpoint's request and send it to the endpoints

@@ -23,17 +23,15 @@ import (
 	"github.com/cilium/cilium/pkg/apierror"
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/endpointmanager"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/maps/lxcmap"
-	"github.com/cilium/cilium/pkg/policy"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/go-openapi/runtime/middleware"
 )
 
-// Sets the given secLabel on the endpoint with the given endpointID. Returns a pointer of
-// a copy endpoint if the endpoint was found, nil otherwise.
-func (d *Daemon) SetEndpointIdentity(ep *endpoint.Endpoint, dockerID, dockerEPID string, labels *policy.Identity) {
+func setEndpointIdentity(ep *endpoint.Endpoint, dockerID, dockerEPID string) {
 	setIfNotEmpty := func(receiver *string, provider string) {
 		if receiver != nil && *receiver == "" && provider != "" {
 			*receiver = provider
@@ -41,11 +39,8 @@ func (d *Daemon) SetEndpointIdentity(ep *endpoint.Endpoint, dockerID, dockerEPID
 	}
 
 	ep.Mutex.Lock()
-	setIfNotEmpty(&ep.DockerID, dockerID)
 	setIfNotEmpty(&ep.DockerEndpointID, dockerEPID)
 	ep.Mutex.Unlock()
-
-	ep.SetIdentity(d, labels)
 }
 
 type getEndpoint struct {
@@ -156,7 +151,7 @@ func (h *putEndpointID) Handle(params PutEndpointIDParams) middleware.Responder 
 
 	if len(add) > 0 {
 		endpointmanager.Mutex.Unlock()
-		errLabelsAdd := h.d.UpdateSecLabels(params.ID, add, labels.Labels{})
+		errLabelsAdd := h.d.updateSecLabels(params.ID, add, labels.Labels{})
 		endpointmanager.Mutex.Lock()
 		if errLabelsAdd != nil {
 			log.Errorf("Could not add labels %v while creating an ep %s due to %s", add, params.ID, errLabelsAdd)
@@ -269,10 +264,9 @@ func (d *Daemon) deleteEndpoint(ep *endpoint.Endpoint) int {
 	defer ep.Mutex.Unlock()
 	ep.LeaveLocked(d)
 
-	sha256sum := ep.Labels.Enabled().SHA256Sum()
-	if err := d.DeleteIdentityBySHA256(sha256sum, ep.StringID()); err != nil {
-		log.Errorf("Error while deleting labels (SHA256SUM:%s) %+v: %s",
-			sha256sum, ep.Labels.Enabled(), err)
+	if err := identity.Release(ep.Labels.Enabled(), ep.StringID()); err != nil {
+		log.Errorf("Error while deleting identity for labels %+v: %s",
+			ep.Labels.Enabled(), err)
 	}
 	errors := lxcmap.DeleteElement(ep)
 
@@ -437,7 +431,6 @@ func NewGetEndpointIDLabelsHandler(d *Daemon) GetEndpointIDLabelsHandler {
 func (h *getEndpointIDLabels) Handle(params GetEndpointIDLabelsParams) middleware.Responder {
 	log.Debugf("GET /endpoint/{id}/labels %+v", params)
 
-	d := h.daemon
 	ep, err := endpointmanager.Lookup(params.ID)
 	if err != nil {
 		return apierror.Error(GetEndpointIDInvalidCode, err)
@@ -447,40 +440,32 @@ func (h *getEndpointIDLabels) Handle(params GetEndpointIDLabelsParams) middlewar
 	}
 
 	ep.Mutex.RLock()
-	dockerID := ep.DockerID
-	ep.Mutex.RUnlock()
+	defer ep.Mutex.RUnlock()
 
-	d.containersMU.RLock()
-	cont := d.containers[dockerID]
-	d.containersMU.RUnlock()
-	if cont == nil {
-		return NewGetEndpointIDLabelsNotFound()
-	}
-
-	cont.Mutex.RLock()
 	cfg := models.LabelConfiguration{
 		Disabled:            ep.Labels.Disabled.GetModel(),
 		Custom:              ep.Labels.Custom.GetModel(),
 		OrchestrationSystem: ep.Labels.Orchestration.GetModel(),
 	}
-	cont.Mutex.RUnlock()
 
 	return NewGetEndpointIDLabelsOK().WithPayload(&cfg)
 }
 
-// UpdateSecLabels add and deletes the given labels on given endpoint ID.
+// updateSecLabels add and deletes the given labels on given endpoint ID.
 // The received `add` and `del` labels will be filtered with the valid label
 // prefixes.
 // The `add` labels take precedence over `del` labels, this means if the same
 // label is set on both `add` and `del`, that specific label will exist in the
 // endpoint's labels.
-func (d *Daemon) UpdateSecLabels(id string, add, del labels.Labels) middleware.Responder {
+func (d *Daemon) updateSecLabels(id string, add, del labels.Labels) middleware.Responder {
 	d.conf.ValidLabelPrefixesMU.RLock()
-	addLabels := d.conf.ValidLabelPrefixes.FilterLabels(add)
-	delLabels := d.conf.ValidLabelPrefixes.FilterLabels(del)
+	req := endpoint.LabelsChangeRequest{
+		Add:    d.conf.ValidLabelPrefixes.FilterLabels(add),
+		Delete: d.conf.ValidLabelPrefixes.FilterLabels(del),
+	}
 	d.conf.ValidLabelPrefixesMU.RUnlock()
 
-	if len(addLabels) == 0 && len(delLabels) == 0 {
+	if req.IsEmpty() {
 		return nil
 	}
 
@@ -492,91 +477,10 @@ func (d *Daemon) UpdateSecLabels(id string, add, del labels.Labels) middleware.R
 		return NewPutEndpointIDLabelsNotFound()
 	}
 
-	ep.Mutex.RLock()
-	epDockerID := ep.DockerID
-	oldLabels := ep.Labels.DeepCopy()
-	ep.Mutex.RUnlock()
-
-	d.containersMU.RLock()
-	cont := d.containers[epDockerID]
-	d.containersMU.RUnlock()
-
-	contID := ""
-	if cont != nil {
-		contID = cont.ID
+	err = ep.ApplyLabelChanges(d, req)
+	if err != nil {
+		return apierror.Error(GetEndpointIDInvalidCode, err)
 	}
-
-	if len(delLabels) > 0 {
-		for k := range delLabels {
-			// The change request is accepted if the label is on
-			// any of the lists. If the label is already disabled,
-			// we will simply ignore that change.
-			if oldLabels.Orchestration[k] != nil ||
-				oldLabels.Custom[k] != nil ||
-				oldLabels.Disabled[k] != nil {
-				break
-			}
-
-			return apierror.New(PutEndpointIDLabelsLabelNotFoundCode,
-				"label %s not found", k)
-		}
-	}
-
-	if len(delLabels) > 0 {
-		for k, v := range delLabels {
-			if oldLabels.Orchestration[k] != nil {
-				delete(oldLabels.Orchestration, k)
-				oldLabels.Disabled[k] = v
-			}
-
-			if oldLabels.Custom[k] != nil {
-				delete(oldLabels.Custom, k)
-			}
-		}
-	}
-
-	if len(addLabels) > 0 {
-		for k, v := range addLabels {
-			if oldLabels.Disabled[k] != nil {
-				delete(oldLabels.Disabled, k)
-				oldLabels.Orchestration[k] = v
-			} else if oldLabels.Orchestration[k] == nil {
-				oldLabels.Custom[k] = v
-			}
-		}
-	}
-
-	identity, newHash, err2 := d.updateEndpointIdentity(ep.StringID(), ep.LabelsHash, oldLabels)
-	if err2 != nil {
-		return apierror.Error(PutEndpointIDLabelsUpdateFailedCode, err2)
-	}
-	ep.Mutex.Lock()
-	ep.LabelsHash = newHash
-	ep.Labels = *oldLabels
-	ep.Mutex.Unlock()
-
-	// FIXME: Undo identity update?
-
-	ep, _ = endpointmanager.Lookup(id)
-	if ep == nil {
-		return NewPutEndpointIDLabelsNotFound()
-	}
-	containerFound := false
-
-	d.containersMU.RLock()
-	if d.containers[epDockerID] != nil {
-		containerFound = true
-	}
-	d.containersMU.RUnlock()
-
-	if !containerFound {
-		log.Debugf("NewPutEndpointIDLabelsNotFound container %s for endpoint %s not found", id, ep.StringID())
-	}
-
-	d.SetEndpointIdentity(ep, contID, "", identity)
-
-	// FIXME if the labels weren't changed do we still need to regenerate?
-	ep.Regenerate(d)
 
 	return nil
 }
@@ -598,7 +502,7 @@ func (h *putEndpointIDLabels) Handle(params PutEndpointIDLabelsParams) middlewar
 	add := labels.NewLabelsFromModel(mod.Add)
 	del := labels.NewLabelsFromModel(mod.Delete)
 
-	err := d.UpdateSecLabels(params.ID, add, del)
+	err := d.updateSecLabels(params.ID, add, del)
 	if err != nil {
 		return err
 	}

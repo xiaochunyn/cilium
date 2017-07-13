@@ -16,11 +16,13 @@ package policy
 
 import (
 	"sync"
+
+	"github.com/cilium/cilium/pkg/identity"
 )
 
 type ConsumableCache struct {
 	cacheMU sync.RWMutex // Protects the `cache` map
-	cache   map[NumericIdentity]*Consumable
+	cache   map[identity.NumericID]*Consumable
 	// List of consumables representing the reserved identities
 	reserved  []*Consumable
 	iteration int
@@ -28,13 +30,13 @@ type ConsumableCache struct {
 
 func NewConsumableCache() *ConsumableCache {
 	return &ConsumableCache{
-		cache:     map[NumericIdentity]*Consumable{},
+		cache:     map[identity.NumericID]*Consumable{},
 		reserved:  make([]*Consumable, 0),
 		iteration: 1,
 	}
 }
 
-func (c *ConsumableCache) GetOrCreate(id NumericIdentity, lbls *Identity) *Consumable {
+func (c *ConsumableCache) GetOrCreate(id identity.NumericID, lbls *identity.Identity) *Consumable {
 	c.cacheMU.Lock()
 	defer c.cacheMU.Unlock()
 	if cons, ok := c.cache[id]; ok {
@@ -45,7 +47,7 @@ func (c *ConsumableCache) GetOrCreate(id NumericIdentity, lbls *Identity) *Consu
 	return c.cache[id]
 }
 
-func (c *ConsumableCache) Lookup(id NumericIdentity) *Consumable {
+func (c *ConsumableCache) Lookup(id identity.NumericID) *Consumable {
 	c.cacheMU.RLock()
 	v, _ := c.cache[id]
 	c.cacheMU.RUnlock()
@@ -64,10 +66,10 @@ func (c *ConsumableCache) AddReserved(elem *Consumable) {
 	c.cacheMU.Unlock()
 }
 
-// GetReservedIDs returns a slice of NumericIdentity present in the
+// GetReservedIDs returns a slice of NumericID present in the
 // ConsumableCache.
-func (c *ConsumableCache) GetReservedIDs() []NumericIdentity {
-	identities := []NumericIdentity{}
+func (c *ConsumableCache) GetReservedIDs() []identity.NumericID {
+	identities := []identity.NumericID{}
 	c.cacheMU.RLock()
 	for _, id := range c.reserved {
 		identities = append(identities, id.ID)
@@ -78,11 +80,11 @@ func (c *ConsumableCache) GetReservedIDs() []NumericIdentity {
 
 // GetConsumables returns a map of consumables numeric identity mapped to
 // consumers numeric identities.
-func (c *ConsumableCache) GetConsumables() map[NumericIdentity][]NumericIdentity {
-	consumables := map[NumericIdentity][]NumericIdentity{}
+func (c *ConsumableCache) GetConsumables() identity.IdentityMap {
+	consumables := identity.IdentityMap{}
 	c.cacheMU.RLock()
 	for _, consumable := range c.cache {
-		consumers := []NumericIdentity{}
+		consumers := []identity.NumericID{}
 		for _, consumer := range consumable.Consumers {
 			consumers = append(consumers, consumer.ID)
 		}
@@ -118,11 +120,11 @@ func (c *ConsumableCache) IncrementIteration() {
 // c := ConsumablesInANotInB(a, b)
 // println(c)
 // {3: [4], 4: [2, 1]}
-func ConsumablesInANotInB(a, b map[NumericIdentity][]NumericIdentity) map[NumericIdentity][]NumericIdentity {
-	c := map[NumericIdentity][]NumericIdentity{}
+func ConsumablesInANotInB(a, b identity.IdentityMap) identity.IdentityMap {
+	c := identity.IdentityMap{}
 	for oldConsumable, oldConsumers := range a {
 		if newConsumers, ok := b[oldConsumable]; ok {
-			consumersFound := []NumericIdentity{}
+			consumersFound := []identity.NumericID{}
 			for _, oldConsumer := range oldConsumers {
 				found := false
 				for _, newConsumer := range newConsumers {

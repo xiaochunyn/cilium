@@ -237,3 +237,33 @@ func (s *LabelsSuite) TestLabelParseKey(c *C) {
 		c.Assert(lbl, DeepEquals, test.out)
 	}
 }
+
+func (s *LabelsSuite) TestGetKey(c *C) {
+	tests := [][]string{
+		{"source0:key0=value1", "source3:key1", "source4:key1==value1"},
+		{"source::key1=value1", "4blah=:foo=", "5blah::foo="},
+		{"source2.key1=value1"},
+		{"1foo", ":2foo", ":3foo="},
+		{"6foo==", "7foo=bar"},
+	}
+
+	for _, t := range tests {
+		l := NewLabelsFromModel(t)
+		l2, err := l.PutKey(l.GetKey())
+		c.Assert(err, IsNil)
+		c.Assert(l2, DeepEquals, l)
+	}
+
+	lbls := Labels{
+		"foo==": NewLabel("foo==", "bar", LabelSourceContainer),
+		"foo2":  NewLabel("foo2", "=bar2", LabelSourceContainer),
+		"key":   NewLabel("key", "", LabelSourceContainer),
+		`foo\\`: NewLabel(`foo\\`, `\=`, LabelSourceContainer),
+		`//`:    NewLabel(`//`, "", LabelSourceContainer),
+		`%`:     NewLabel(`%`, `%ed`, LabelSourceContainer),
+	}
+
+	l2, err := lbls.PutKey(lbls.GetKey())
+	c.Assert(err, IsNil)
+	c.Assert(l2, DeepEquals, lbls)
+}

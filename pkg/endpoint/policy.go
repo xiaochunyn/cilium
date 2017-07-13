@@ -20,13 +20,14 @@ import (
 	"path/filepath"
 
 	"github.com/cilium/cilium/api/v1/models"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/policy"
 	"github.com/cilium/cilium/pkg/policy/api"
 
 	log "github.com/Sirupsen/logrus"
 )
 
-func (e *Endpoint) checkEgressAccess(owner Owner, opts models.ConfigurationMap, dstID policy.NumericIdentity, opt string) {
+func (e *Endpoint) checkEgressAccess(owner Owner, opts models.ConfigurationMap, dstID identity.NumericID, opt string) {
 	var err error
 
 	ctx := policy.SearchContext{
@@ -52,7 +53,7 @@ func (e *Endpoint) checkEgressAccess(owner Owner, opts models.ConfigurationMap, 
 }
 
 // allowConsumer must be called with global endpoint.Mutex held
-func (e *Endpoint) allowConsumer(owner Owner, id policy.NumericIdentity) {
+func (e *Endpoint) allowConsumer(owner Owner, id identity.NumericID) {
 	cache := owner.GetConsumableCache()
 	if !e.Opts.IsEnabled(OptionConntrack) {
 		e.Consumable.AllowConsumerAndReverseLocked(cache, id)
@@ -61,7 +62,7 @@ func (e *Endpoint) allowConsumer(owner Owner, id policy.NumericIdentity) {
 	}
 }
 
-func (e *Endpoint) evaluateConsumerSource(owner Owner, ctx *policy.SearchContext, srcID policy.NumericIdentity) error {
+func (e *Endpoint) evaluateConsumerSource(owner Owner, ctx *policy.SearchContext, srcID identity.NumericID) error {
 	var err error
 
 	ctx.From, err = owner.GetCachedLabelList(srcID)
@@ -69,13 +70,13 @@ func (e *Endpoint) evaluateConsumerSource(owner Owner, ctx *policy.SearchContext
 		return err
 	}
 
+	log.Debugf("[%s] Evaluating policy for context %+v", e.PolicyID(), ctx)
+
 	// Skip currently unused IDs
 	if ctx.From == nil || len(ctx.From) == 0 {
 		log.Debugf("[%s] Ignoring unused ID %v", e.PolicyID(), ctx)
 		return nil
 	}
-
-	log.Debugf("[%s] Evaluating context %+v", e.PolicyID(), ctx)
 
 	if owner.GetPolicyRepository().AllowsRLocked(ctx) == api.Allowed {
 		e.allowConsumer(owner, srcID)
@@ -139,11 +140,6 @@ func (e *Endpoint) regenerateConsumable(owner Owner) (bool, error) {
 	//	return false, nil
 	//}
 
-	maxID, err := owner.GetCachedMaxLabelID()
-	if err != nil {
-		return false, err
-	}
-
 	c.Mutex.RLock()
 	ctx := policy.SearchContext{
 		To: c.LabelArray,
@@ -174,12 +170,11 @@ func (e *Endpoint) regenerateConsumable(owner Owner) (bool, error) {
 	c.L4Policy = newL4policy
 
 	if newL4policy.HasRedirect() || owner.AlwaysAllowLocalhost() {
-		e.allowConsumer(owner, policy.ID_HOST)
+		e.allowConsumer(owner, identity.ID_HOST)
 	}
 
 	// Check access from reserved consumables first
-	reservedIDs := cache.GetReservedIDs()
-	for _, id := range reservedIDs {
+	for _, id := range cache.GetReservedIDs() {
 		if err := e.evaluateConsumerSource(owner, &ctx, id); err != nil {
 			// This should never really happen
 			// FIXME: clear policy because it is inconsistent
@@ -189,15 +184,12 @@ func (e *Endpoint) regenerateConsumable(owner Owner) (bool, error) {
 	}
 
 	// Iterate over all possible assigned search contexts
-	idx := policy.MinimalNumericIdentity
-	log.Debugf("[%s] Eval ID range %+v-%+v", e.PolicyID(), idx, maxID)
-	for idx < maxID {
-		if err := e.evaluateConsumerSource(owner, &ctx, idx); err != nil {
+	for _, id := range identity.GetIDs() {
+		if err := e.evaluateConsumerSource(owner, &ctx, id); err != nil {
 			// FIXME: clear policy because it is inconsistent
 			log.Debugf("[%s] Received error while evaluating policy: %s",
 				e.PolicyID(), err)
 		}
-		idx++
 	}
 
 	// Garbage collect all unused entries
@@ -264,8 +256,8 @@ func (e *Endpoint) regeneratePolicy(owner Owner) (bool, error) {
 	repo.Mutex.RLock()
 	e.Consumable.Mutex.RLock()
 
-	e.checkEgressAccess(owner, opts, policy.ID_HOST, OptionAllowToHost)
-	e.checkEgressAccess(owner, opts, policy.ID_WORLD, OptionAllowToWorld)
+	e.checkEgressAccess(owner, opts, identity.ID_HOST, OptionAllowToHost)
+	e.checkEgressAccess(owner, opts, identity.ID_WORLD, OptionAllowToWorld)
 
 	if e.Consumable != nil && e.Consumable.L4Policy.RequiresConntrack() {
 		opts[OptionConntrack] = "enabled"
@@ -433,12 +425,9 @@ func (e *Endpoint) TriggerPolicyUpdates(owner Owner) (bool, error) {
 	return changed, err
 }
 
-func (e *Endpoint) SetIdentity(owner Owner, id *policy.Identity) {
+func (e *Endpoint) setIdentityLocked(owner Owner, id *identity.Identity) {
 	repo := owner.GetPolicyRepository()
 	cache := owner.GetConsumableCache()
-
-	e.Mutex.Lock()
-	defer e.Mutex.Unlock()
 
 	repo.Mutex.Lock()
 	defer repo.Mutex.Unlock()
@@ -464,4 +453,11 @@ func (e *Endpoint) SetIdentity(owner Owner, id *policy.Identity) {
 	e.Consumable.Mutex.RLock()
 	log.Debugf("Set identity of EP %d to %d and consumable to %+v", e.ID, id, e.Consumable)
 	e.Consumable.Mutex.RUnlock()
+}
+
+// SetIdentity sets the identify of an endpoint
+func (e *Endpoint) SetIdentity(owner Owner, id *identity.Identity) {
+	e.Mutex.Lock()
+	e.setIdentityLocked(owner, id)
+	e.Mutex.Unlock()
 }

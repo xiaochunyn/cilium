@@ -17,12 +17,15 @@ package labels
 import (
 	"bytes"
 	"crypto/sha512"
+	"encoding/base32"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/cilium/cilium/common"
+	"github.com/cilium/cilium/pkg/kvstore"
 )
 
 const (
@@ -339,6 +342,72 @@ func (l Labels) MergeLabels(from Labels) {
 // guarantee that it will always have the same SHA256Sum.
 func (l Labels) SHA256Sum() string {
 	return fmt.Sprintf("%x", sha512.New512_256().Sum(l.sortedList()))
+}
+
+// String returns a set of labels in human readable form
+func (l Labels) String() string {
+	val := ""
+	for _, k := range l {
+		if val != "" {
+			val += ";"
+		}
+		val += k.String()
+	}
+	return val
+}
+
+// GetKey returns the labels as key for kvstore.Allocator
+func (l Labels) GetKey() string {
+	// FIXME Optimize this
+
+	var keys []string
+	for k := range l {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	sorted := make([]Label, len(keys))
+	idx := 0
+	for _, k := range keys {
+		sorted[idx] = *l[k]
+		idx++
+	}
+
+	b := bytes.Buffer{}
+	e := gob.NewEncoder(&b)
+	err := e.Encode(sorted)
+	if err != nil {
+		panic("failed to gob Label")
+	}
+	return base32.StdEncoding.EncodeToString(b.Bytes())
+}
+
+// PutKey parses the key used in kvstore.Allocator
+func (l Labels) PutKey(v string) (kvstore.AllocatorKey, error) {
+	// FIXME Optimize this
+
+	labels := []Label{}
+
+	by, err := base32.StdEncoding.DecodeString(v)
+	if err != nil {
+		return nil, err
+	}
+
+	b := bytes.Buffer{}
+	b.Write(by)
+	d := gob.NewDecoder(&b)
+	err = d.Decode(&labels)
+	if err != nil {
+		return nil, err
+	}
+
+	lbls := Labels{}
+	for k := range labels {
+		copy := labels[k]
+		lbls[copy.Key] = &copy
+	}
+
+	return kvstore.AllocatorKey(lbls), err
 }
 
 func (l Labels) sortedList() []byte {

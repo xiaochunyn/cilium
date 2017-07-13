@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package policy
+package identity
 
 import (
+	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/cilium/cilium/api/v1/models"
@@ -25,32 +27,36 @@ import (
 const (
 	secLabelTimeout = time.Duration(120 * time.Second)
 
-	// MinimalNumericIdentity represents the minimal numeric identity not
+	// MinimalNumericID represents the minimal numeric identity not
 	// used for reserved purposes.
-	MinimalNumericIdentity = NumericIdentity(256)
+	MinimalNumericID = NumericID(256)
 
 	// InvalidIdentity is the identity assigned if the identity is invalid
 	// or not determined yet
-	InvalidIdentity = NumericIdentity(0)
+	InvalidIdentity = NumericID(0)
 )
 
-// NumericIdentity represents an identity of an entity to which consumer policy
+// NumericID represents an identity of an entity to which consumer policy
 // can be applied to.
-type NumericIdentity uint32
+type NumericID uint32
 
-func ParseNumericIdentity(id string) (NumericIdentity, error) {
+// IdentityMap maps identities to identities
+type IdentityMap map[NumericID][]NumericID
+
+// ParseNumericID parses an identity from a string
+func ParseNumericID(id string) (NumericID, error) {
 	nid, err := strconv.ParseUint(id, 0, 32)
 	if err != nil {
-		return NumericIdentity(0), err
+		return NumericID(0), err
 	}
-	return NumericIdentity(nid), nil
+	return NumericID(nid), nil
 }
 
-func (id NumericIdentity) StringID() string {
+func (id NumericID) StringID() string {
 	return strconv.FormatUint(uint64(id), 10)
 }
 
-func (id NumericIdentity) String() string {
+func (id NumericID) String() string {
 	if v, exists := ReservedIdentityNames[id]; exists {
 		return v
 	}
@@ -59,19 +65,24 @@ func (id NumericIdentity) String() string {
 }
 
 // Uint32 normalizes the ID for use in BPF program.
-func (id NumericIdentity) Uint32() uint32 {
+func (id NumericID) Uint32() uint32 {
 	return uint32(id)
 }
+
+type identityEndpointsMap map[string]bool
 
 // Identity is the representation of the security context for a particular set of
 // labels.
 type Identity struct {
-	// Identity's ID.
-	ID NumericIdentity `json:"id"`
-	// Endpoints that have this Identity where their value is the last time they were seen.
-	Labels labels.Labels `json:"labels"`
-	// Set of labels that belong to this Identity.
-	Endpoints map[string]time.Time `json:"containers"`
+	// ID is the identifier given by the allocator
+	ID NumericID
+
+	// Labels which describes this identity
+	Labels labels.Labels
+
+	// Endpoints is map of all endpoints which use this identity
+	Endpoints identityEndpointsMap
+	mutex     sync.RWMutex
 }
 
 func NewIdentityFromModel(base *models.Identity) *Identity {
@@ -80,9 +91,9 @@ func NewIdentityFromModel(base *models.Identity) *Identity {
 	}
 
 	id := &Identity{
-		ID:        NumericIdentity(base.ID),
+		ID:        NumericID(base.ID),
 		Labels:    make(labels.Labels),
-		Endpoints: make(map[string]time.Time),
+		Endpoints: identityEndpointsMap{},
 	}
 	for _, v := range base.Labels {
 		lbl := labels.ParseLabel(v)
@@ -109,11 +120,16 @@ func (id *Identity) GetModel() *models.Identity {
 	return ret
 }
 
+// String returns the identity identifier in human readable form
+func (id *Identity) String() string {
+	return fmt.Sprintf("%d", id.ID)
+}
+
 func (id *Identity) DeepCopy() *Identity {
 	cpy := &Identity{
 		ID:        id.ID,
 		Labels:    id.Labels.DeepCopy(),
-		Endpoints: make(map[string]time.Time, len(id.Endpoints)),
+		Endpoints: make(identityEndpointsMap, len(id.Endpoints)),
 	}
 	for k, v := range id.Endpoints {
 		cpy.Endpoints[k] = v
@@ -121,57 +137,44 @@ func (id *Identity) DeepCopy() *Identity {
 	return cpy
 }
 
-func NewIdentity() *Identity {
-	return &Identity{
-		Endpoints: make(map[string]time.Time),
-		Labels:    make(map[string]*labels.Label),
-	}
-}
-
-// AssociateEndpoint associates the endpoint with identity.
-func (id *Identity) AssociateEndpoint(epID string) {
-	id.Endpoints[epID] = time.Now().UTC()
-}
-
-// DisassociateEndpoint disassociates the endpoint endpoint with identity and
-// returns true if successful.
-func (id *Identity) DisassociateEndpoint(epID string) bool {
-	if _, ok := id.Endpoints[epID]; ok {
-		delete(id.Endpoints, epID)
-		return true
+// NewIdentity creates a new identity
+func NewIdentity(id NumericID, lbls labels.Labels, endpoints []string) *Identity {
+	identity := &Identity{
+		ID:        id,
+		Endpoints: identityEndpointsMap{},
+		Labels:    lbls,
 	}
 
-	return false
+	for _, v := range endpoints {
+		identity.Endpoints[v] = true
+	}
+
+	return identity
 }
 
+// RefCount returns the number of endpoints using the identity
 func (id *Identity) RefCount() int {
-	refCount := 0
-	for _, t := range id.Endpoints {
-		if t.Add(secLabelTimeout).After(time.Now().UTC()) {
-			refCount++
-		}
-	}
-	return refCount
+	return len(id.Endpoints)
 }
 
 const (
-	ID_UNKNOWN NumericIdentity = iota
+	ID_UNKNOWN NumericID = iota
 	ID_HOST
 	ID_WORLD
 )
 
 var (
-	ReservedIdentities = map[string]NumericIdentity{
+	ReservedIdentities = map[string]NumericID{
 		labels.IDNameHost:  ID_HOST,
 		labels.IDNameWorld: ID_WORLD,
 	}
-	ReservedIdentityNames = map[NumericIdentity]string{
+	ReservedIdentityNames = map[NumericID]string{
 		ID_HOST:  labels.IDNameHost,
 		ID_WORLD: labels.IDNameWorld,
 	}
 )
 
-func GetReservedID(name string) NumericIdentity {
+func GetReservedID(name string) NumericID {
 	if v, ok := ReservedIdentities[name]; ok {
 		return v
 	}

@@ -40,10 +40,10 @@ import (
 	"github.com/cilium/cilium/pkg/apierror"
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/byteorder"
-	"github.com/cilium/cilium/pkg/container"
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/endpointmanager"
 	"github.com/cilium/cilium/pkg/events"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/k8s"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/maps/ctmap"
@@ -105,14 +105,8 @@ type Daemon struct {
 	loopbackIPv4      net.IP
 	policy            *policy.Repository
 
-	containersMU sync.RWMutex
-	containers   map[string]*container.Container
-
 	ignoredMutex      sync.RWMutex
 	ignoredContainers map[string]int
-
-	maxCachedLabelIDMU sync.RWMutex
-	maxCachedLabelID   policy.NumericIdentity
 
 	uniqueIDMU sync.Mutex
 	uniqueID   map[uint64]bool
@@ -538,6 +532,8 @@ func (d *Daemon) compileBase() error {
 }
 
 func (d *Daemon) init() error {
+	identity.InitAllocator(d)
+
 	globalsDir := filepath.Join(d.conf.StateDir, "globals")
 	if err := os.MkdirAll(globalsDir, defaults.RuntimePathRights); err != nil {
 		log.Fatalf("Could not create runtime directory %s: %s", globalsDir, err)
@@ -596,8 +592,8 @@ func (d *Daemon) init() error {
 	}
 
 	fw.WriteString(common.FmtDefineComma("HOST_IP", hostIP))
-	fmt.Fprintf(fw, "#define HOST_ID %d\n", policy.GetReservedID(labels.IDNameHost))
-	fmt.Fprintf(fw, "#define WORLD_ID %d\n", policy.GetReservedID(labels.IDNameWorld))
+	fmt.Fprintf(fw, "#define HOST_ID %d\n", identity.GetReservedID(labels.IDNameHost))
+	fmt.Fprintf(fw, "#define WORLD_ID %d\n", identity.GetReservedID(labels.IDNameWorld))
 	fmt.Fprintf(fw, "#define LB_RR_MAX_SEQ %d\n", lbmap.MaxSeq)
 
 	fmt.Fprintf(fw, "#define TUNNEL_ENDPOINT_MAP_SIZE %d\n", tunnel.MaxEntries)
@@ -760,7 +756,6 @@ func NewDaemon(c *Config) (*Daemon, error) {
 	d := Daemon{
 		conf:              c,
 		dockerClient:      dockerClient,
-		containers:        make(map[string]*container.Container),
 		events:            make(chan events.Event, 512),
 		loadBalancer:      lb,
 		consumableCache:   policy.NewConsumableCache(),
@@ -909,7 +904,7 @@ func NewDaemon(c *Config) (*Daemon, error) {
 	d.l7Proxy = proxy.NewProxy(10000, 20000)
 
 	if c.RestoreState {
-		if err := d.SyncState(d.conf.StateDir, true); err != nil {
+		if err := d.RestoreState(d.conf.StateDir, true); err != nil {
 			log.Warningf("Error while recovering endpoints: %s\n", err)
 		}
 		if err := d.SyncLBMap(); err != nil {
@@ -1155,4 +1150,20 @@ func (d *Daemon) clearCiliumVeths() error {
 		}
 	}
 	return nil
+}
+
+// RLockEndpoints locks the daemon's endpoint manager
+func (d *Daemon) RLockEndpoints() {
+	endpointmanager.Mutex.RLock()
+}
+
+// RUnlockEndpoints unlocks the daemon's endpoint manager
+func (d *Daemon) RUnlockEndpoints() {
+	endpointmanager.Mutex.RUnlock()
+}
+
+// LookupLocked looks up the endpoint by ID. Must be called with RLockEndpoints
+// held
+func (d *Daemon) LookupLocked(id uint16) *endpoint.Endpoint {
+	return endpointmanager.LookupCiliumIDLocked(id)
 }

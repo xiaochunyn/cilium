@@ -25,13 +25,12 @@ import (
 	"time"
 
 	"github.com/cilium/cilium/common/addressing"
-	"github.com/cilium/cilium/pkg/container"
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/endpointmanager"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/k8s"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/nodeaddress"
-	"github.com/cilium/cilium/pkg/policy"
 
 	log "github.com/Sirupsen/logrus"
 	dTypes "github.com/docker/engine-api/types"
@@ -225,11 +224,6 @@ func (d *Daemon) handleCreateContainer(id string, retry bool) {
 			continue
 		}
 
-		dockerEpID := ""
-		if dockerContainer.NetworkSettings != nil {
-			dockerEpID = dockerContainer.NetworkSettings.EndpointID
-		}
-
 		ep := endpointmanager.LookupDockerID(id)
 		if ep == nil {
 			// container id is yet unknown, try and find endpoint via
@@ -241,6 +235,7 @@ func (d *Daemon) handleCreateContainer(id string, retry bool) {
 				if ep != nil {
 					// Associate container id with endpoint
 					ep.Mutex.Lock()
+					log.Debugf("Associating DockerID %s with endpoint %s", id, ep.StringID())
 					ep.DockerID = id
 					ep.Mutex.Unlock()
 					endpointmanager.LinkContainerID(ep)
@@ -258,65 +253,20 @@ func (d *Daemon) handleCreateContainer(id string, retry bool) {
 			continue
 		}
 
-		d.containersMU.RLock()
-		cont, ok := d.containers[id]
-		d.containersMU.RUnlock()
-		if !ok {
-			cont = container.NewContainer(dockerContainer)
+		dockerEpID := ""
+		if dockerContainer.NetworkSettings != nil {
+			dockerEpID = dockerContainer.NetworkSettings.EndpointID
 		}
+		setEndpointIdentity(ep, dockerContainer.ID, dockerEpID)
+		endpointmanager.UpdateReferences(ep)
 
-		ep.Mutex.Lock()
-		orchLabelsModified := ep.UpdateOrchestrationLabels(lbls)
-		if ok && !orchLabelsModified {
-			ep.Mutex.Unlock()
-			log.Debugf("No changes to orch labels.")
+		if _, err := ep.UpdateOrchestrationLabels(d, lbls); err != nil {
+			log.Warningf("Unable to update orchestration labels: %s", err)
 			return
 		}
-		// It's mandatory to update the container in its label otherwise
-		// the label will be considered unused.
-		identity, newHash, err := d.updateEndpointIdentity(ep.StringID(), ep.LabelsHash, &ep.Labels)
-		if err != nil {
-			ep.Mutex.Unlock()
-			log.Warningf("unable to update identity of container %s: %s", id, err)
-			return
-		}
-		ep.LabelsHash = newHash
-		ep.Mutex.Unlock()
-
-		ep = endpointmanager.LookupDockerID(id)
-		if ep == nil {
-			log.Warningf("endpoint disappeared while processing event for %s, ignoring", id)
-			return
-		}
-		ep.Mutex.RLock()
-		epDockerID := ep.DockerID
-		epID := ep.ID
-		ep.Mutex.RUnlock()
-
-		d.containersMU.Lock()
-
-		// If the container ID was known and found before, check if it still
-		// exists, it may have disappared while we gave up the containers
-		// lock to create/update the identity.
-		if ok && d.containers[epDockerID] == nil {
-			d.containersMU.Unlock()
-			// endpoint is around but container id was removed, likely
-			// a bug.
-			//
-			// FIXME: Disconnect endpoint?
-			log.Errorf("BUG: unrefered container %s with endpoint %d present",
-				id, epID)
-			return
-		}
-
-		d.containers[epDockerID] = cont
-		d.containersMU.Unlock()
-
-		d.SetEndpointIdentity(ep, cont.ID, dockerEpID, identity)
-		ep.Regenerate(d)
 
 		// FIXME: Does this rebuild epID twice?
-		d.TriggerPolicyUpdates([]policy.NumericIdentity{identity.ID})
+		d.TriggerPolicyUpdates([]identity.NumericID{ep.GetIdentity()})
 		return
 	}
 
@@ -340,11 +290,6 @@ func (d *Daemon) retrieveDockerLabels(dockerID string) (*dTypes.ContainerJSON, l
 
 func (d *Daemon) deleteContainer(dockerID string) {
 	log.Debugf("Processing deletion event for docker container %s", dockerID)
-
-	d.containersMU.Lock()
-	delete(d.containers, dockerID)
-	d.containersMU.Unlock()
-
 	d.DeleteEndpoint(endpoint.NewID(endpoint.ContainerIdPrefix, dockerID))
 }
 

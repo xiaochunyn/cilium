@@ -17,13 +17,14 @@ package policy
 import (
 	. "gopkg.in/check.v1"
 
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
 const (
-	CONSUMER_ID1 = NumericIdentity(10)
-	CONSUMER_ID2 = NumericIdentity(20)
-	CONSUMER_ID3 = NumericIdentity(30)
+	CONSUMER_ID1 = identity.NumericID(10)
+	CONSUMER_ID2 = identity.NumericID(20)
+	CONSUMER_ID3 = identity.NumericID(30)
 )
 
 func (s *PolicyTestSuite) TestNewConsumer(c *C) {

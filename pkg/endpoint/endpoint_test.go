@@ -22,6 +22,7 @@ import (
 
 	"github.com/cilium/cilium/api/v1/models"
 	"github.com/cilium/cilium/common/addressing"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/mac"
 	"github.com/cilium/cilium/pkg/maps/policymap"
@@ -92,13 +93,13 @@ func (s *EndpointSuite) TestDeepCopy(c *C) {
 	}
 	cpy := epWant.DeepCopy()
 	c.Assert(cpy, DeepEquals, epWant)
-	epWant.SecLabel = &policy.Identity{
+	epWant.SecLabel = &identity.Identity{
 		ID: 1,
 		Labels: labels.Labels{
 			"io.cilium.kubernetes": labels.NewLabel("io.cilium.kubernetes", "", "cilium"),
 		},
-		Endpoints: map[string]time.Time{
-			"1234": time.Now(),
+		Endpoints: map[string]bool{
+			"1234": true,
 		},
 	}
 	epWant.Consumable = &policy.Consumable{
@@ -114,33 +115,30 @@ func (s *EndpointSuite) TestDeepCopy(c *C) {
 		Consumers: map[string]*policy.Consumer{
 			"foo": policy.NewConsumer(12),
 		},
-		ReverseRules: map[policy.NumericIdentity]*policy.Consumer{
+		ReverseRules: map[identity.NumericID]*policy.Consumer{
 			12: policy.NewConsumer(12),
 		},
 	}
 	epWant.PolicyMap = &policymap.PolicyMap{}
 	cpy = epWant.DeepCopy()
-	c.Assert(*cpy.SecLabel, DeepEquals, *epWant.SecLabel)
+	c.Assert(cpy.SecLabel, DeepEquals, epWant.SecLabel)
 	c.Assert(cpy.Consumable, DeepEquals, epWant.Consumable)
 	c.Assert(*cpy.PolicyMap, DeepEquals, *epWant.PolicyMap)
 
-	epWant.Consumable.Labels = &policy.Identity{
+	epWant.Consumable.Labels = &identity.Identity{
 		ID: 1,
 		Labels: labels.Labels{
 			"io.cilium.kubernetes": labels.NewLabel("io.cilium.kubernetes", "", "cilium"),
 		},
-		Endpoints: map[string]time.Time{
-			"1234": time.Now(),
+		Endpoints: map[string]bool{
+			"1234": true,
 		},
 	}
 
 	epWant.PolicyMap = &policymap.PolicyMap{}
 	cpy = epWant.DeepCopy()
 
-	c.Assert(*cpy.Consumable.Labels, DeepEquals, *epWant.Consumable.Labels)
-
-	cpy.Consumable.Labels.Endpoints["1234"] = time.Now()
-	c.Assert(*cpy.Consumable.Labels, Not(DeepEquals), *epWant.Consumable.Labels)
+	c.Assert(cpy.Consumable.Labels, DeepEquals, epWant.Consumable.Labels)
 }
 
 func (s *EndpointSuite) TestEndpointStatus(c *C) {

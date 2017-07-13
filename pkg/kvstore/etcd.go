@@ -25,13 +25,11 @@ import (
 
 	"github.com/cilium/cilium/common"
 	"github.com/cilium/cilium/common/types"
-	"github.com/cilium/cilium/pkg/policy"
 
 	log "github.com/Sirupsen/logrus"
 	client "github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	clientyaml "github.com/coreos/etcd/clientv3/yaml"
-	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/hashicorp/go-version"
 	ctx "golang.org/x/net/context"
 )
@@ -61,6 +59,7 @@ type EtcdClient struct {
 	session     *concurrency.Session
 	lockPathsMU sync.Mutex
 	lockPaths   map[string]*sync.Mutex
+	stopRenew   chan bool
 }
 
 type EtcdLocker struct {
@@ -97,28 +96,34 @@ func newEtcdClient(config *client.Config, cfgPath string) (KVClient, error) {
 		cli:       c,
 		session:   s,
 		lockPaths: map[string]*sync.Mutex{},
+		stopRenew: make(chan bool, 0),
 	}
 	if err := ec.CheckMinVersion(15 * time.Second); err != nil {
 		log.Fatalf("%s", err)
 	}
-	go func() {
+	go func(ec *EtcdClient) {
 		for {
-			<-ec.session.Done()
-			newSession, err := concurrency.NewSession(c)
-			if err != nil {
-				log.Warningf("Error while renewing etcd session %s", err)
-				time.Sleep(3 * time.Second)
-			} else {
-				ec.sessionMU.Lock()
-				ec.session = newSession
-				ec.sessionMU.Unlock()
-				log.Debugf("Renewing etcd session")
-				if err := ec.CheckMinVersion(10 * time.Second); err != nil {
-					log.Fatalf("%s", err)
+			select {
+			case <-ec.stopRenew:
+				return
+			case <-ec.session.Done():
+				newSession, err := concurrency.NewSession(c)
+				if err != nil {
+					log.Warningf("Error while renewing etcd session %s", err)
+					time.Sleep(3 * time.Second)
+				} else {
+					ec.sessionMU.Lock()
+					ec.session = newSession
+					ec.sessionMU.Unlock()
+					log.Debugf("Renewing etcd session")
+					if err := ec.CheckMinVersion(10 * time.Second); err != nil {
+						log.Fatalf("%s", err)
+					}
 				}
 			}
 		}
-	}()
+	}(ec)
+
 	return ec, nil
 }
 
@@ -301,70 +306,6 @@ func (e *EtcdClient) SetMaxID(key string, firstID, maxID uint32) error {
 	return e.SetValue(key, maxID)
 }
 
-func (e *EtcdClient) setMaxLabelID(maxID uint32) error {
-	return e.SetMaxID(common.LastFreeLabelIDKeyPath, policy.MinimalNumericIdentity.Uint32(), maxID)
-}
-
-// GASNewSecLabelID gets the next available LabelID and sets it in id. After
-// assigning the LabelID to id it sets the LabelID + 1 in
-// common.LastFreeLabelIDKeyPath path.
-func (e *EtcdClient) GASNewSecLabelID(basePath string, baseID uint32, pI *policy.Identity) error {
-	setID2Label := func(new_id uint32) error {
-		pI.ID = policy.NumericIdentity(new_id)
-		keyPath := path.Join(basePath, pI.ID.StringID())
-		if err := e.SetValue(keyPath, pI); err != nil {
-			return err
-		}
-		return e.setMaxLabelID(new_id + 1)
-	}
-
-	acquireFreeID := func(firstID uint32, incID *uint32) (bool, error) {
-		log.Debugf("Trying to acquire a new free ID %d", *incID)
-		keyPath := path.Join(basePath, strconv.FormatUint(uint64(*incID), 10))
-
-		locker, err := e.LockPath(getLockPath(keyPath))
-		if err != nil {
-			return false, err
-		}
-		defer locker.Unlock()
-
-		value, err := e.GetValue(keyPath)
-		if err != nil {
-			return false, err
-		}
-		if value == nil {
-			return false, setID2Label(*incID)
-		}
-		var consulLabels policy.Identity
-		if err := json.Unmarshal(value, &consulLabels); err != nil {
-			return false, err
-		}
-		if consulLabels.RefCount() == 0 {
-			log.Infof("Recycling ID %d", *incID)
-			return false, setID2Label(*incID)
-		}
-
-		*incID++
-		if *incID > common.MaxSetOfLabels {
-			*incID = policy.MinimalNumericIdentity.Uint32()
-		}
-		if firstID == *incID {
-			return false, fmt.Errorf("reached maximum set of labels available.")
-		}
-		return true, nil
-	}
-
-	beginning := baseID
-	for {
-		retry, err := acquireFreeID(beginning, &baseID)
-		if err != nil {
-			return err
-		} else if !retry {
-			return nil
-		}
-	}
-}
-
 func (e *EtcdClient) setMaxL3n4AddrID(maxID uint32) error {
 	return e.SetMaxID(common.LastFreeServiceIDKeyPath, common.FirstFreeServiceID, maxID)
 }
@@ -473,47 +414,6 @@ func (e *EtcdClient) StartWatch(w *Watcher) {
 			}
 		}
 	}(w)
-}
-
-// GetWatcher watches for kvstore changes in the given key. Triggers the returned channel
-// every time the key path is changed.
-// FIXME This function is highly tightened to the maxFreeID, change name accordingly
-func (e *EtcdClient) GetWatcher(key string, timeSleep time.Duration) <-chan []policy.NumericIdentity {
-	ch := make(chan []policy.NumericIdentity, 100)
-	go func(ch chan []policy.NumericIdentity) {
-		curSeconds := time.Second
-		lastRevision := int64(0)
-		for {
-			w := <-e.cli.Watch(ctx.Background(), key, client.WithRev(lastRevision))
-			if w.Err() != nil {
-				log.Warning("Unable to watch key %s, retrying...", key)
-				time.Sleep(curSeconds)
-				if curSeconds < timeSleep {
-					curSeconds += time.Second
-				}
-				continue
-			}
-			curSeconds = time.Second
-			lastRevision = w.CompactRevision
-			freeID := uint32(0)
-			maxFreeID := uint32(0)
-			for _, event := range w.Events {
-				if event.Type != mvccpb.PUT || event.Kv == nil {
-					continue
-				}
-				if err := json.Unmarshal(event.Kv.Value, &freeID); err != nil {
-					continue
-				}
-				if freeID > maxFreeID {
-					maxFreeID = freeID
-				}
-			}
-			if maxFreeID != 0 {
-				ch <- []policy.NumericIdentity{policy.NumericIdentity(maxFreeID)}
-			}
-		}
-	}(ch)
-	return ch
 }
 
 func (e *EtcdClient) Status() (string, error) {
@@ -687,5 +587,6 @@ func (e *EtcdClient) DeleteLease(lease interface{}) error {
 
 // Close closes the kvstore client
 func (e *EtcdClient) Close() {
+	e.stopRenew <- true
 	e.cli.Close()
 }

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cilium/cilium/pkg/policy"
+	"github.com/cilium/cilium/pkg/identity"
 
 	"github.com/spf13/cobra"
 )
@@ -31,7 +31,7 @@ var identityGetCmd = &cobra.Command{
 	Short: "Retrieve the identity of the specified label",
 	Run: func(cmd *cobra.Command, args []string) {
 		if listID {
-			for k, v := range policy.ReservedIdentities {
+			for k, v := range identity.ReservedIdentities {
 				fmt.Printf("%-15s %3d\n", k, v)
 			}
 			return
@@ -41,7 +41,7 @@ var identityGetCmd = &cobra.Command{
 			Usagef(cmd, "Invalid identity ID")
 		}
 
-		if id := policy.GetReservedID(args[0]); id != policy.ID_UNKNOWN {
+		if id := identity.GetReservedID(args[0]); id != identity.ID_UNKNOWN {
 			fmt.Printf("%d\n", id)
 		} else {
 			os.Exit(1)

@@ -31,6 +31,7 @@ import (
 	"github.com/cilium/cilium/common/addressing"
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/byteorder"
+	"github.com/cilium/cilium/pkg/identity"
 	pkgLabels "github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/mac"
 	"github.com/cilium/cilium/pkg/maps/cidrmap"
@@ -188,7 +189,7 @@ type Endpoint struct {
 	IfIndex          int                   // Host's interface index.
 	NodeMAC          mac.MAC               // Node MAC address.
 	NodeIP           net.IP                // Node IPv6 address.
-	SecLabel         *policy.Identity      // Security Label  set to this endpoint.
+	SecLabel         *identity.Identity    // Security Label  set to this endpoint.
 	PortMap          []PortMap             // Port mapping used for this endpoint.
 	Consumable       *policy.Consumable
 	PolicyMap        *policymap.PolicyMap
@@ -550,19 +551,19 @@ func (e *Endpoint) StringID() string {
 	return strconv.Itoa(int(e.ID))
 }
 
-func (e *Endpoint) GetIdentity() policy.NumericIdentity {
+func (e *Endpoint) GetIdentity() identity.NumericID {
 	if e.SecLabel != nil {
 		return e.SecLabel.ID
 	}
 
-	return policy.InvalidIdentity
+	return identity.InvalidIdentity
 }
 
 func (e *Endpoint) directoryPath() string {
 	return filepath.Join(".", fmt.Sprintf("%d", e.ID))
 }
 
-func (e *Endpoint) Allows(id policy.NumericIdentity) bool {
+func (e *Endpoint) Allows(id identity.NumericID) bool {
 	e.Mutex.RLock()
 	defer e.Mutex.RUnlock()
 	if e.Consumable != nil {

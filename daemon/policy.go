@@ -26,6 +26,8 @@ import (
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/endpointmanager"
+	"github.com/cilium/cilium/pkg/identity"
+	"github.com/cilium/cilium/pkg/kvstore"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/maps/policymap"
 	"github.com/cilium/cilium/pkg/policy"
@@ -37,7 +39,7 @@ import (
 )
 
 // GetCachedLabelList returns the cached labels for the given identity.
-func (d *Daemon) GetCachedLabelList(ID policy.NumericIdentity) (labels.LabelArray, error) {
+func (d *Daemon) GetCachedLabelList(ID identity.NumericID) (labels.LabelArray, error) {
 	// Check if we have the source security context in our local
 	// consumable cache
 	if c := d.consumableCache.Lookup(ID); c != nil {
@@ -46,7 +48,7 @@ func (d *Daemon) GetCachedLabelList(ID policy.NumericIdentity) (labels.LabelArra
 
 	// No cache entry or labels not available, do full lookup of labels
 	// via KV store
-	lbls, err := d.LookupIdentity(ID)
+	lbls, err := identity.GetByID(ID)
 	if err != nil {
 		return nil, err
 	}
@@ -65,9 +67,15 @@ func (d *Daemon) invalidateCache() {
 	d.consumableCache.IncrementIteration()
 }
 
+// OnIdentityChanges is called by the identity manager whenever an identity
+// changed has occured
+func (d *Daemon) OnIdentityChanges(typ kvstore.EventType, id *identity.Identity) {
+	d.TriggerPolicyUpdates([]identity.NumericID{id.ID})
+}
+
 // TriggerPolicyUpdates triggers policy updates for every daemon's endpoint.
 // Returns a waiting group which signalizes when all endpoints are regenerated.
-func (d *Daemon) TriggerPolicyUpdates(added []policy.NumericIdentity) *sync.WaitGroup {
+func (d *Daemon) TriggerPolicyUpdates(added []identity.NumericID) *sync.WaitGroup {
 
 	if len(added) == 0 {
 		log.Debugf("Full policy recalculation triggered")
@@ -263,7 +271,7 @@ func (d *Daemon) PolicyAdd(rules api.Rules, opts *AddOptions) (uint64, *apierror
 	}
 
 	log.Info("New policy imported, regenerating...")
-	d.TriggerPolicyUpdates([]policy.NumericIdentity{})
+	d.TriggerPolicyUpdates([]identity.NumericID{})
 
 	return rev, nil
 }
@@ -288,7 +296,7 @@ func (d *Daemon) PolicyDelete(labels labels.LabelArray) (uint64, *apierror.APIEr
 		// to check which consumables were removed with the new policy.
 		oldConsumables := d.consumableCache.GetConsumables()
 
-		wg := d.TriggerPolicyUpdates([]policy.NumericIdentity{})
+		wg := d.TriggerPolicyUpdates([]identity.NumericID{})
 
 		// If daemon doesn't enforce policy then skip the cleanup
 		// of CT entries.
@@ -416,16 +424,10 @@ func (h *getPolicy) Handle(params GetPolicyParams) middleware.Responder {
 }
 
 func (d *Daemon) PolicyInit() error {
-	for k, v := range policy.ReservedIdentities {
-		key := policy.NumericIdentity(v).String()
-		lbl := labels.NewLabel(
-			key, "", labels.LabelSourceReserved,
-		)
-		secLbl := policy.NewIdentity()
-		secLbl.ID = v
-		secLbl.AssociateEndpoint(lbl.String())
-		secLbl.Labels[k] = lbl
-
+	for k, v := range identity.ReservedIdentities {
+		lbl := labels.NewLabel(identity.NumericID(v).String(), "", labels.LabelSourceReserved)
+		id := identity.NewIdentity(v, labels.Labels{}, []string{lbl.String()})
+		id.Labels[k] = lbl
 		policyMapPath := bpf.MapPath(fmt.Sprintf("%sreserved_%d", policymap.MapName, int(v)))
 
 		policyMap, _, err := policymap.OpenMap(policyMapPath)
@@ -433,9 +435,9 @@ func (d *Daemon) PolicyInit() error {
 			return fmt.Errorf("Could not create policy BPF map '%s': %s", policyMapPath, err)
 		}
 
-		c := d.consumableCache.GetOrCreate(v, secLbl)
+		c := d.consumableCache.GetOrCreate(v, id)
 		if c == nil {
-			return fmt.Errorf("Unable to initialize consumable for %v", secLbl)
+			return fmt.Errorf("Unable to initialize consumable for %s", id)
 		}
 		d.consumableCache.AddReserved(c)
 		c.AddMap(policyMap)

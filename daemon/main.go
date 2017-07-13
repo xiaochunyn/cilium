@@ -534,8 +534,6 @@ func runDaemon() {
 		log.Warningf("Error while enabling docker event watcher %s", err)
 	}
 
-	d.EnableKVStoreWatcher(30 * time.Second)
-
 	if err := d.EnableK8sWatcher(5 * time.Minute); err != nil {
 		log.Warningf("Error while enabling k8s watcher %s", err)
 	}

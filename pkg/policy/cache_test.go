@@ -15,21 +15,23 @@
 package policy
 
 import (
+	"github.com/cilium/cilium/pkg/identity"
+
 	. "gopkg.in/check.v1"
 )
 
 func (s *PolicyTestSuite) TestConsumablesInANotInB(c *C) {
-	a := map[NumericIdentity][]NumericIdentity{
-		NumericIdentity(3): {NumericIdentity(1), NumericIdentity(2), NumericIdentity(4)},
-		NumericIdentity(4): {NumericIdentity(2), NumericIdentity(1)},
+	a := identity.IdentityMap{
+		identity.NumericID(3): {identity.NumericID(1), identity.NumericID(2), identity.NumericID(4)},
+		identity.NumericID(4): {identity.NumericID(2), identity.NumericID(1)},
 	}
-	b := map[NumericIdentity][]NumericIdentity{
-		NumericIdentity(1): {NumericIdentity(5), NumericIdentity(1), NumericIdentity(7)},
-		NumericIdentity(3): {NumericIdentity(1), NumericIdentity(2), NumericIdentity(5)},
+	b := identity.IdentityMap{
+		identity.NumericID(1): {identity.NumericID(5), identity.NumericID(1), identity.NumericID(7)},
+		identity.NumericID(3): {identity.NumericID(1), identity.NumericID(2), identity.NumericID(5)},
 	}
-	wanted := map[NumericIdentity][]NumericIdentity{
-		NumericIdentity(3): {NumericIdentity(4)},
-		NumericIdentity(4): {NumericIdentity(1), NumericIdentity(2)},
+	wanted := identity.IdentityMap{
+		identity.NumericID(3): {identity.NumericID(4)},
+		identity.NumericID(4): {identity.NumericID(1), identity.NumericID(2)},
 	}
 	received := ConsumablesInANotInB(a, b)
 

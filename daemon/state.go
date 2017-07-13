@@ -18,22 +18,22 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path/filepath"
-	"reflect"
 
 	"github.com/cilium/cilium/common"
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/endpointmanager"
 	"github.com/cilium/cilium/pkg/events"
+	"github.com/cilium/cilium/pkg/identity"
 
 	log "github.com/Sirupsen/logrus"
 	dockerAPI "github.com/docker/engine-api/client"
 	ctx "golang.org/x/net/context"
 )
 
-// SyncState syncs cilium state against the containers running in the host. dir is the
+// RestoreState syncs cilium state against the containers running in the host. dir is the
 // cilium's running directory. If clean is set, the endpoints that don't have its
 // container in running state are deleted.
-func (d *Daemon) SyncState(dir string, clean bool) error {
+func (d *Daemon) RestoreState(dir string, clean bool) error {
 	restored := 0
 
 	log.Info("Recovering old running endpoints...")
@@ -54,8 +54,8 @@ func (d *Daemon) SyncState(dir string, clean bool) error {
 	for _, ep := range possibleEPs {
 		log.Debugf("Restoring endpoint ID %d", ep.ID)
 
-		if err := d.syncLabels(ep); err != nil {
-			log.Warningf("Unable to restore endpoint %+v: %s", ep, err)
+		if err := d.resolveIdentity(ep); err != nil {
+			log.Warningf("Unable to restore endpoint %s: %s", ep.StringID(), err)
 			continue
 		}
 
@@ -66,7 +66,7 @@ func (d *Daemon) SyncState(dir string, clean bool) error {
 		}
 
 		if buildSuccess := <-ep.Regenerate(d); !buildSuccess {
-			continue
+			log.Warningf("Failed to build endpoint %s while restoring", ep.StringID())
 		}
 
 		endpointmanager.Insert(ep)
@@ -179,42 +179,30 @@ func readEPsFromDirNames(basePath string, eptsDirNames []string) []*endpoint.End
 	return possibleEPs
 }
 
-// syncLabels syncs the labels from the labels' database for the given endpoint. To be
-// used with endpoint.Mutex locked.
-func (d *Daemon) syncLabels(ep *endpoint.Endpoint) error {
+// resolveIdentity fetches and restores the identity of the endpoint being restored.
+func (d *Daemon) resolveIdentity(ep *endpoint.Endpoint) error {
 	if ep.SecLabel == nil {
-		return fmt.Errorf("Endpoint doesn't have a security label.")
-	}
-
-	sha256sum := ep.SecLabel.Labels.SHA256Sum()
-	labels, err := LookupIdentityBySHA256(sha256sum)
-	if err != nil {
-		return fmt.Errorf("Unable to get labels of sha256sum:%s: %+v\n", sha256sum, err)
-	}
-
-	if ep.DockerID == "" {
+		// No labels attached, skip identity allocation
 		return nil
 	}
 
-	if labels == nil {
-		l, _, err := d.CreateOrUpdateIdentity(ep.SecLabel.Labels, ep.StringID())
-		if err != nil {
-			return fmt.Errorf("Unable to put labels %+v: %s\n", ep.SecLabel.Labels, err)
-		}
-		labels = l
+	// Although the endpoint may have an identity associated with it
+	// already. It needs to be resolved properly for the following reasons:
+	//  - the reference count on the identity needs to account for this
+	//    endpoint
+	//  - the labels -> identity mapping may have changed while the agent
+	//    was down. The endpoint may need to be assigned a new identity.
+	id, _, err := identity.Allocate(ep.SecLabel.Labels, ep.StringID())
+	if err != nil {
+		return fmt.Errorf("unable to allocate identity: %s", err)
 	}
 
-	if !reflect.DeepEqual(labels.Labels, ep.SecLabel.Labels) {
-		return fmt.Errorf("The set of labels should be the same for " +
-			"the endpoint being restored and the labels stored")
+	if id.ID != ep.SecLabel.ID {
+		log.Debugf("restore: Endpoint %d has switch identity %d->%d",
+			ep.ID, ep.SecLabel.ID, id.ID)
 	}
 
-	if labels.ID != ep.SecLabel.ID {
-		log.Infof("Security label ID for endpoint %d is different "+
-			"that the one stored, updating from %d to %d\n",
-			ep.ID, ep.SecLabel.ID, labels.ID)
-	}
-	ep.SetIdentity(d, labels)
+	ep.SetIdentity(d, id)
 
 	return nil
 }

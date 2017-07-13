@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/cilium/cilium/pkg/endpointmanager"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/maps/policymap"
-	"github.com/cilium/cilium/pkg/policy"
 
 	log "github.com/Sirupsen/logrus"
 )
@@ -99,7 +99,7 @@ func (d *Daemon) EnableLogstash(LogstashAddr string, refreshTime int) {
 	}
 }
 
-func (d *Daemon) getInlineLabelStr(id policy.NumericIdentity) string {
+func (d *Daemon) getInlineLabelStr(id identity.NumericID) string {
 	l, err := d.GetCachedLabelList(id)
 	if err != nil {
 		return ""
@@ -120,7 +120,7 @@ func (d *Daemon) processStats(allPes map[uint16][]policymap.PolicyEntryDump) []L
 		for _, stat := range v {
 			lss = append(lss, LogstashStat{
 				FromID:  stat.ID,
-				From:    d.getInlineLabelStr(policy.NumericIdentity(stat.ID)),
+				From:    d.getInlineLabelStr(identity.NumericID(stat.ID)),
 				ToID:    strconv.FormatUint(uint64(k), 10),
 				Bytes:   stat.Bytes,
 				Packets: stat.Packets,

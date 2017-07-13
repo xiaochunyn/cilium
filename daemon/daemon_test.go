@@ -15,7 +15,17 @@
 package main
 
 import (
+	"io/ioutil"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/cilium/cilium/common"
+	"github.com/cilium/cilium/daemon/options"
+	"github.com/cilium/cilium/pkg/endpoint"
+	"github.com/cilium/cilium/pkg/identity"
+	"github.com/cilium/cilium/pkg/kvstore"
+	"github.com/cilium/cilium/pkg/option"
 
 	. "gopkg.in/check.v1"
 )
@@ -28,3 +38,34 @@ type DaemonSuite struct {
 }
 
 var _ = Suite(&DaemonSuite{})
+
+func (ds *DaemonSuite) SetUpTest(c *C) {
+	tempRunDir, err := ioutil.TempDir("", "cilium-test-run")
+	c.Assert(err, IsNil)
+	err = os.Mkdir(filepath.Join(tempRunDir, "globals"), 0777)
+	c.Assert(err, IsNil)
+
+	daemonConf := &Config{
+		DryMode: true,
+		Opts:    option.NewBoolOptions(&options.Library),
+	}
+	daemonConf.RunDir = tempRunDir
+	daemonConf.StateDir = tempRunDir
+	daemonConf.DockerEndpoint = "tcp://127.0.0.1"
+	daemonConf.ValidLabelPrefixes = nil
+	daemonConf.Opts.Set(endpoint.OptionDropNotify, true)
+	daemonConf.Device = "undefined"
+
+	err = kvstore.SetupDummy()
+	c.Assert(err, IsNil)
+
+	d, err := NewDaemon(daemonConf)
+	c.Assert(err, IsNil)
+	ds.d = d
+	kvstore.Client.DeleteTree(common.OperationalPath)
+}
+
+func (ds *DaemonSuite) TearDownTest(c *C) {
+	identity.ShutdownAllocator()
+	os.RemoveAll(ds.d.conf.RunDir)
+}

@@ -22,8 +22,8 @@ import (
 
 	"github.com/cilium/cilium/common"
 	"github.com/cilium/cilium/pkg/bpf"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/maps/policymap"
-	"github.com/cilium/cilium/pkg/policy"
 	"github.com/cilium/cilium/pkg/policy/api"
 
 	"github.com/spf13/cobra"
@@ -51,7 +51,7 @@ func listMap(cmd *cobra.Command, args []string) {
 	lbl := args[0]
 
 	if lbl != "" {
-		if id := policy.GetReservedID(lbl); id != policy.ID_UNKNOWN {
+		if id := identity.GetReservedID(lbl); id != identity.ID_UNKNOWN {
 			lbl = "reserved_" + strconv.FormatUint(uint64(id), 10)
 		}
 	} else {
@@ -70,7 +70,7 @@ func listMap(cmd *cobra.Command, args []string) {
 	if err != nil {
 		Fatalf("Error while opening bpf Map: %s\n", err)
 	}
-	labelsID := map[policy.NumericIdentity]*policy.Identity{}
+	labelsID := map[identity.NumericID]*identity.Identity{}
 
 	w := tabwriter.NewWriter(os.Stdout, 5, 0, 3, ' ', 0)
 
@@ -84,12 +84,12 @@ func listMap(cmd *cobra.Command, args []string) {
 
 	for _, stat := range statsMap {
 		if !printIDs {
-			id := policy.NumericIdentity(stat.ID)
+			id := identity.NumericID(stat.ID)
 			if lbls, err := client.IdentityGet(id.StringID()); err != nil {
 				fmt.Fprintf(os.Stderr, "Was impossible to retrieve label ID %d: %s\n",
 					id, err)
 			} else {
-				labelsID[id] = policy.NewIdentityFromModel(lbls)
+				labelsID[id] = identity.NewIdentityFromModel(lbls)
 			}
 		}
 
@@ -101,7 +101,7 @@ func listMap(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t\n", labelsDesTitle, actionTitle, bytesTitle, packetsTitle)
 	}
 	for _, stat := range statsMap {
-		id := policy.NumericIdentity(stat.ID)
+		id := identity.NumericID(stat.ID)
 		act := api.Decision(stat.Action)
 		if printIDs {
 			fmt.Fprintf(w, "%d\t%s\t%d\t%d\t\n", id, act.String(), stat.Bytes, stat.Packets)

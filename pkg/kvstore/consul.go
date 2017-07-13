@@ -24,7 +24,6 @@ import (
 
 	"github.com/cilium/cilium/common"
 	"github.com/cilium/cilium/common/types"
-	"github.com/cilium/cilium/pkg/policy"
 
 	log "github.com/Sirupsen/logrus"
 	consulAPI "github.com/hashicorp/consul/api"
@@ -230,68 +229,6 @@ func (c *ConsulClient) SetMaxID(key string, firstID, maxID uint32) error {
 	return err
 }
 
-func (c *ConsulClient) setMaxLabelID(maxID uint32) error {
-	return c.SetMaxID(common.LastFreeLabelIDKeyPath, uint32(policy.MinimalNumericIdentity), maxID)
-}
-
-func (c *ConsulClient) GASNewSecLabelID(basePath string, baseID uint32, pI *policy.Identity) error {
-
-	setID2Label := func(lockPair *consulAPI.KVPair) error {
-		defer c.KV().Release(lockPair, nil)
-		pI.ID = policy.NumericIdentity(baseID)
-		keyPath := path.Join(basePath, pI.ID.StringID())
-		if err := c.SetValue(keyPath, pI); err != nil {
-			return err
-		}
-		return c.setMaxLabelID(baseID + 1)
-	}
-
-	session, _, err := c.Session().CreateNoChecks(nil, nil)
-	if err != nil {
-		return err
-	}
-
-	beginning := baseID
-	for {
-		log.Debugf("Trying to acquire a new free ID %d", baseID)
-		keyPath := path.Join(basePath, strconv.FormatUint(uint64(baseID), 10))
-
-		lockPair := &consulAPI.KVPair{Key: getLockPath(keyPath), Session: session}
-		acq, _, err := c.KV().Acquire(lockPair, nil)
-		if err != nil {
-			return err
-		}
-
-		if acq {
-			lblKey, _, err := c.KV().Get(keyPath, nil)
-			if err != nil {
-				c.KV().Release(lockPair, nil)
-				return err
-			}
-			if lblKey == nil {
-				return setID2Label(lockPair)
-			}
-			var consulLabels policy.Identity
-			if err := json.Unmarshal(lblKey.Value, &consulLabels); err != nil {
-				c.KV().Release(lockPair, nil)
-				return err
-			}
-			if consulLabels.RefCount() == 0 {
-				log.Infof("Recycling ID %d", baseID)
-				return setID2Label(lockPair)
-			}
-			c.KV().Release(lockPair, nil)
-		}
-		baseID++
-		if baseID > common.MaxSetOfLabels {
-			baseID = policy.MinimalNumericIdentity.Uint32()
-		}
-		if beginning == baseID {
-			return fmt.Errorf("reached maximum set of labels available.")
-		}
-	}
-}
-
 func (c *ConsulClient) setMaxL3n4AddrID(maxID uint32) error {
 	return c.SetMaxID(common.LastFreeServiceIDKeyPath, common.FirstFreeServiceID, maxID)
 }
@@ -407,43 +344,6 @@ func (c *ConsulClient) StartWatch(w *Watcher) {
 	}(w)
 }
 
-// GetWatcher watches for kvstore changes in the given key. Triggers the returned channel
-// every time the key path is changed.
-// FIXME This function is highly tightened to the maxFreeID, change name accordingly
-func (c *ConsulClient) GetWatcher(key string, timeSleep time.Duration) <-chan []policy.NumericIdentity {
-	ch := make(chan []policy.NumericIdentity, 100)
-	go func(ch chan []policy.NumericIdentity) {
-		curSeconds := time.Second
-		var (
-			k   *consulAPI.KVPair
-			q   *consulAPI.QueryMeta
-			qo  consulAPI.QueryOptions
-			err error
-		)
-		for {
-			k, q, err = c.KV().Get(key, &qo)
-			if err != nil {
-				log.Errorf("Unable to retrieve last free Index: %s", err)
-			}
-			if k == nil || q == nil {
-				log.Warning("Unable to retrieve last free Index, please start some containers with labels.")
-				time.Sleep(curSeconds)
-				if curSeconds < timeSleep {
-					curSeconds += time.Second
-				}
-				continue
-			}
-			curSeconds = time.Second
-			qo.WaitIndex = q.LastIndex
-			maxFreeID := uint32(0)
-			if err := json.Unmarshal(k.Value, &maxFreeID); err == nil {
-				ch <- []policy.NumericIdentity{policy.NumericIdentity(maxFreeID)}
-			}
-		}
-	}(ch)
-	return ch
-}
-
 func (c *ConsulClient) Status() (string, error) {
 	leader, err := c.Client.Status().Leader()
 	return "Consul: " + leader, err
@@ -520,7 +420,7 @@ func (c *ConsulClient) CreateOnly(key string, value []byte, lease bool) error {
 // CreateIfExists creates a key with the value only if key condKey exists
 func (c *ConsulClient) CreateIfExists(condKey, key string, value []byte, lease bool) error {
 	if err := c.CreateOnly(key, value, lease); err != nil {
-		return err
+		return fmt.Errorf("value key creation failed: %s", err)
 	}
 
 	// Consul does not support transactions which would allow to check for

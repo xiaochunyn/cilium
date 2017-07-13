@@ -20,7 +20,9 @@ import (
 
 	"github.com/cilium/cilium/common/addressing"
 	"github.com/cilium/cilium/daemon/options"
+	"github.com/cilium/cilium/pkg/apierror"
 	"github.com/cilium/cilium/pkg/endpoint"
+	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/mac"
 	"github.com/cilium/cilium/pkg/option"
@@ -33,6 +35,7 @@ var (
 	HardAddr    = mac.MAC{0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
 	IPv6Addr, _ = addressing.NewCiliumIPv6("beef:beef:beef:beef:aaaa:aaaa:1111:1112")
 	IPv4Addr, _ = addressing.NewCiliumIPv4("10.11.12.13")
+	nilAPIError *apierror.APIError
 )
 
 func (ds *DaemonSuite) TestUpdateConsumerMap(c *C) {
@@ -82,23 +85,23 @@ func (ds *DaemonSuite) TestUpdateConsumerMap(c *C) {
 	c.Assert(err3, Equals, nilAPIError)
 
 	qaBarLbls := labels.Labels{lblBar.Key: lblBar, lblQA.Key: lblQA}
-	qaBarSecLblsCtx, _, err := ds.d.CreateOrUpdateIdentity(qaBarLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
+	qaBarSecLblsCtx, _, err := identity.Allocate(qaBarLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
 	c.Assert(err, Equals, nil)
 
 	prodBarLbls := labels.Labels{lblBar.Key: lblBar, lblProd.Key: lblProd}
-	prodBarSecLblsCtx, _, err := ds.d.CreateOrUpdateIdentity(prodBarLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
+	prodBarSecLblsCtx, _, err := identity.Allocate(prodBarLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
 	c.Assert(err, Equals, nil)
 
 	qaFooLbls := labels.Labels{lblFoo.Key: lblFoo, lblQA.Key: lblQA}
-	qaFooSecLblsCtx, _, err := ds.d.CreateOrUpdateIdentity(qaFooLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
+	qaFooSecLblsCtx, _, err := identity.Allocate(qaFooLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
 	c.Assert(err, Equals, nil)
 
 	prodFooLbls := labels.Labels{lblFoo.Key: lblFoo, lblProd.Key: lblProd}
-	prodFooSecLblsCtx, _, err := ds.d.CreateOrUpdateIdentity(prodFooLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
+	prodFooSecLblsCtx, _, err := identity.Allocate(prodFooLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
 	c.Assert(err, Equals, nil)
 
 	prodFooJoeLbls := labels.Labels{lblFoo.Key: lblFoo, lblProd.Key: lblProd, lblJoe.Key: lblJoe}
-	prodFooJoeSecLblsCtx, _, err := ds.d.CreateOrUpdateIdentity(prodFooJoeLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
+	prodFooJoeSecLblsCtx, _, err := identity.Allocate(prodFooJoeLbls, "cc08ff400e355f736dce1c291a6a4007ab9f2d56d42e1f3630ba87b861d45307")
 	c.Assert(err, Equals, nil)
 
 	e := endpoint.Endpoint{
