@@ -24,6 +24,7 @@ import (
 	. "github.com/cilium/cilium/api/v1/server/restapi/policy"
 	"github.com/cilium/cilium/common"
 	"github.com/cilium/cilium/pkg/apierror"
+	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/events"
 	"github.com/cilium/cilium/pkg/kvstore"
 	"github.com/cilium/cilium/pkg/labels"
@@ -142,7 +143,7 @@ func (d *Daemon) CreateOrUpdateIdentity(lbls labels.Labels, epid string) (*polic
 	return identity, isNew, nil
 }
 
-func (d *Daemon) updateEndpointIdentity(epID, oldLabelsHash string, opLabels *labels.OpLabels) (*policy.Identity, string, error) {
+func (d *Daemon) updateEndpointIdentity(epID, oldLabelsHash string, opLabels *endpoint.EndpointLabels) (*policy.Identity, string, error) {
 	lbls := opLabels.Enabled()
 	log.Debugf("Endpoint %s is resolving identity for labels %+v", epID, lbls)
 

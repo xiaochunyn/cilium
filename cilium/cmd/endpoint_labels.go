@@ -59,7 +59,7 @@ var endpointLabelsCmd = &cobra.Command{
 		if lbls, err := client.EndpointLabelsGet(id); err != nil {
 			Fatalf("Cannot get endpoint labels: %s", err)
 		} else {
-			printEndpointLabels(labels.NewOplabelsFromModel(lbls))
+			printEndpointLabels(endpoint.NewEndpointLabelsFromModel(lbls))
 		}
 	},
 }
@@ -70,7 +70,7 @@ func init() {
 	endpointLabelsCmd.Flags().StringSliceVarP(&toDelete, "delete", "d", []string{}, "Delete/disable labels")
 }
 
-func printEndpointLabels(lbls *labels.OpLabels) {
+func printEndpointLabels(lbls *endpoint.EndpointLabels) {
 	log.Debugf("All Labels %#v", *lbls)
 	w := tabwriter.NewWriter(os.Stdout, 2, 0, 3, ' ', 0)
 

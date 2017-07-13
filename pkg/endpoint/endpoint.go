@@ -181,7 +181,7 @@ type Endpoint struct {
 	DockerEndpointID string       // Docker endpoint ID.
 	IfName           string       // Container's interface name.
 	LabelsHash       string
-	OpLabels         pkgLabels.OpLabels
+	Labels           EndpointLabels
 	LXCMAC           mac.MAC               // Container MAC address.
 	IPv6             addressing.CiliumIPv6 // Container IPv6 address.
 	IPv4             addressing.CiliumIPv4 // Container IPv4 address.
@@ -215,14 +215,12 @@ func NewEndpointFromChangeModel(base *models.EndpointChangeRequest, l pkgLabels.
 		DockerEndpointID: base.DockerEndpointID,
 		IfName:           base.InterfaceName,
 		IfIndex:          int(base.InterfaceIndex),
-		OpLabels: pkgLabels.OpLabels{
-			Custom:        pkgLabels.Labels{},
-			Disabled:      pkgLabels.Labels{},
-			Orchestration: l.DeepCopy(),
-		},
-		State:  string(base.State),
-		Status: NewEndpointStatus(),
+		Labels:           NewEndpointLabels(),
+		State:            string(base.State),
+		Status:           NewEndpointStatus(),
 	}
+
+	ep.Labels.Orchestration = l.DeepCopy()
 
 	if base.Mac != "" {
 		m, err := mac.ParseMAC(base.Mac)
@@ -900,35 +898,6 @@ func (e *Endpoint) Update(owner Owner, opts models.ConfigurationMap) error {
 	e.Regenerate(owner)
 
 	return nil
-}
-
-// UpdateOrchLabels updates orchestration labels for the endpoint
-func (e *Endpoint) UpdateOrchLabels(l pkgLabels.Labels) bool {
-	changed := false
-
-	e.OpLabels.Orchestration.MarkAllForDeletion()
-	e.OpLabels.Disabled.MarkAllForDeletion()
-
-	for k, v := range l {
-		if e.OpLabels.Disabled[k] != nil {
-			e.OpLabels.Disabled[k].DeletionMark = false
-		} else {
-			if e.OpLabels.Orchestration[k] != nil {
-				e.OpLabels.Orchestration[k].DeletionMark = false
-			} else {
-				tmp := v.DeepCopy()
-				log.Debugf("Assigning orchestration label %+v", tmp)
-				e.OpLabels.Orchestration[k] = tmp
-				changed = true
-			}
-		}
-	}
-
-	if e.OpLabels.Orchestration.DeleteMarked() || e.OpLabels.Disabled.DeleteMarked() {
-		changed = true
-	}
-
-	return changed
 }
 
 // LeaveLocked removes the endpoint's directory from the system. Must be called

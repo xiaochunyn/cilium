@@ -266,7 +266,7 @@ func (d *Daemon) handleCreateContainer(id string, retry bool) {
 		}
 
 		ep.Mutex.Lock()
-		orchLabelsModified := ep.UpdateOrchLabels(lbls)
+		orchLabelsModified := ep.UpdateOrchestrationLabels(lbls)
 		if ok && !orchLabelsModified {
 			ep.Mutex.Unlock()
 			log.Debugf("No changes to orch labels.")
@@ -274,7 +274,7 @@ func (d *Daemon) handleCreateContainer(id string, retry bool) {
 		}
 		// It's mandatory to update the container in its label otherwise
 		// the label will be considered unused.
-		identity, newHash, err := d.updateEndpointIdentity(ep.StringID(), ep.LabelsHash, &ep.OpLabels)
+		identity, newHash, err := d.updateEndpointIdentity(ep.StringID(), ep.LabelsHash, &ep.Labels)
 		if err != nil {
 			ep.Mutex.Unlock()
 			log.Warningf("unable to update identity of container %s: %s", id, err)

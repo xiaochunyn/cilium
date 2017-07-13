@@ -269,10 +269,10 @@ func (d *Daemon) deleteEndpoint(ep *endpoint.Endpoint) int {
 	defer ep.Mutex.Unlock()
 	ep.LeaveLocked(d)
 
-	sha256sum := ep.OpLabels.Enabled().SHA256Sum()
+	sha256sum := ep.Labels.Enabled().SHA256Sum()
 	if err := d.DeleteIdentityBySHA256(sha256sum, ep.StringID()); err != nil {
 		log.Errorf("Error while deleting labels (SHA256SUM:%s) %+v: %s",
-			sha256sum, ep.OpLabels.Enabled(), err)
+			sha256sum, ep.Labels.Enabled(), err)
 	}
 	errors := lxcmap.DeleteElement(ep)
 
@@ -459,9 +459,9 @@ func (h *getEndpointIDLabels) Handle(params GetEndpointIDLabelsParams) middlewar
 
 	cont.Mutex.RLock()
 	cfg := models.LabelConfiguration{
-		Disabled:            ep.OpLabels.Disabled.GetModel(),
-		Custom:              ep.OpLabels.Custom.GetModel(),
-		OrchestrationSystem: ep.OpLabels.Orchestration.GetModel(),
+		Disabled:            ep.Labels.Disabled.GetModel(),
+		Custom:              ep.Labels.Custom.GetModel(),
+		OrchestrationSystem: ep.Labels.Orchestration.GetModel(),
 	}
 	cont.Mutex.RUnlock()
 
@@ -494,7 +494,7 @@ func (d *Daemon) UpdateSecLabels(id string, add, del labels.Labels) middleware.R
 
 	ep.Mutex.RLock()
 	epDockerID := ep.DockerID
-	oldLabels := ep.OpLabels.DeepCopy()
+	oldLabels := ep.Labels.DeepCopy()
 	ep.Mutex.RUnlock()
 
 	d.containersMU.RLock()
@@ -552,7 +552,7 @@ func (d *Daemon) UpdateSecLabels(id string, add, del labels.Labels) middleware.R
 	}
 	ep.Mutex.Lock()
 	ep.LabelsHash = newHash
-	ep.OpLabels = *oldLabels
+	ep.Labels = *oldLabels
 	ep.Mutex.Unlock()
 
 	// FIXME: Undo identity update?

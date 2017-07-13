@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cilium/cilium/api/v1/models"
 	"github.com/cilium/cilium/common"
 )
 
@@ -34,53 +33,6 @@ const (
 	// IDNameWorld is the label used for the world ID.
 	IDNameWorld = "world"
 )
-
-// OpLabels represents the the possible types.
-type OpLabels struct {
-	// Active labels that are enabled and disabled but not deleted
-	Custom Labels
-	// Labels derived from orchestration system
-	Orchestration Labels
-	// Orchestration labels which have been disabled
-	Disabled Labels
-}
-
-// DeepCopy returns deep copy of the label.
-func (o *OpLabels) DeepCopy() *OpLabels {
-	return &OpLabels{
-		Custom:        o.Custom.DeepCopy(),
-		Disabled:      o.Disabled.DeepCopy(),
-		Orchestration: o.Orchestration.DeepCopy(),
-	}
-}
-
-// Enabled returns map of enabled labels.
-func (o *OpLabels) Enabled() Labels {
-	enabled := make(Labels, len(o.Custom)+len(o.Orchestration))
-
-	for k, v := range o.Custom {
-		enabled[k] = v
-	}
-
-	for k, v := range o.Orchestration {
-		enabled[k] = v
-	}
-
-	return enabled
-}
-
-// NewOplabelsFromModel creates new label from the model.
-func NewOplabelsFromModel(base *models.LabelConfiguration) *OpLabels {
-	if base == nil {
-		return nil
-	}
-
-	return &OpLabels{
-		Custom:        NewLabelsFromModel(base.Custom),
-		Disabled:      NewLabelsFromModel(base.Disabled),
-		Orchestration: NewLabelsFromModel(base.OrchestrationSystem),
-	}
-}
 
 const (
 	// LabelSourceUnspec is a label with unspecified source
