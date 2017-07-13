@@ -94,20 +94,18 @@ func newConsulClient(config *consulAPI.Config) (KVClient, error) {
 func (c *ConsulClient) LockPath(path string) (KVLocker, error) {
 	log.Debugf("Creating lock for %s", path)
 	opts := &consulAPI.LockOptions{
-		Key: GetLockPath(path),
+		Key: getLockPath(path),
 	}
 	lockKey, err := c.LockOpts(opts)
 	if err != nil {
 		return nil, err
 	}
 	ch, err := lockKey.Lock(nil)
-	defer func() {
-		if err == nil {
-			log.Debugf("Locked for %s", path)
-		}
-	}()
 	if ch == nil {
 		return nil, fmt.Errorf("locker is nil\n")
+	}
+	if err == nil {
+		log.Debugf("Locked %s", path)
 	}
 	return lockKey, err
 }
@@ -123,7 +121,7 @@ func (c *ConsulClient) InitializeFreeID(path string, firstID uint32) error {
 	}
 
 	p := &consulAPI.KVPair{Key: path, Value: freeIDByte}
-	lockPair := &consulAPI.KVPair{Key: GetLockPath(path), Session: session}
+	lockPair := &consulAPI.KVPair{Key: getLockPath(path), Session: session}
 	log.Debug("Trying to acquire lock for free ID...")
 	acq, _, err := c.KV().Acquire(lockPair, nil)
 	if err != nil {
@@ -232,11 +230,6 @@ func (c *ConsulClient) SetMaxID(key string, firstID, maxID uint32) error {
 	return err
 }
 
-func (c *ConsulClient) updateSecLabelIDRef(id policy.Identity) error {
-	key := path.Join(common.LabelIDKeyPath, strconv.FormatUint(uint64(id.ID), 10))
-	return c.SetValue(key, id)
-}
-
 func (c *ConsulClient) setMaxLabelID(maxID uint32) error {
 	return c.SetMaxID(common.LastFreeLabelIDKeyPath, uint32(policy.MinimalNumericIdentity), maxID)
 }
@@ -263,7 +256,7 @@ func (c *ConsulClient) GASNewSecLabelID(basePath string, baseID uint32, pI *poli
 		log.Debugf("Trying to acquire a new free ID %d", baseID)
 		keyPath := path.Join(basePath, strconv.FormatUint(uint64(baseID), 10))
 
-		lockPair := &consulAPI.KVPair{Key: GetLockPath(keyPath), Session: session}
+		lockPair := &consulAPI.KVPair{Key: getLockPath(keyPath), Session: session}
 		acq, _, err := c.KV().Acquire(lockPair, nil)
 		if err != nil {
 			return err
@@ -325,7 +318,7 @@ func (c *ConsulClient) GASNewL3n4AddrID(basePath string, baseID uint32, lAddrID 
 		log.Debugf("Trying to acquire a new free ID %d", baseID)
 		keyPath := path.Join(basePath, strconv.FormatUint(uint64(baseID), 10))
 
-		lockPair := &consulAPI.KVPair{Key: GetLockPath(keyPath), Session: session}
+		lockPair := &consulAPI.KVPair{Key: getLockPath(keyPath), Session: session}
 		acq, _, err := c.KV().Acquire(lockPair, nil)
 		if err != nil {
 			return err
@@ -359,6 +352,59 @@ func (c *ConsulClient) GASNewL3n4AddrID(basePath string, baseID uint32, lAddrID 
 			return fmt.Errorf("reached maximum set of serviceIDs available.")
 		}
 	}
+}
+
+// StartWatch starts watching for changes in a prefix
+func (c *ConsulClient) StartWatch(w *Watcher) {
+	go func(w *Watcher) {
+		nextIndex := uint64(0)
+
+		// block Get() calls for 5 seconds maximum
+		qo := consulAPI.QueryOptions{
+			WaitTime: time.Duration(5) * time.Second,
+		}
+
+		for {
+			// if all goes well we don't sleep between watch cycles
+			sleepTime := time.Duration(1) * time.Millisecond
+
+			qo.WaitIndex = nextIndex
+			res, q, err := c.KV().Get(w.prefix, &qo)
+			if err != nil {
+				// in case of error, sleep for 15 seconds before retrying
+				sleepTime = time.Duration(15) * time.Second
+				log.Debugf("watcher %s failed (consul): %s", w.name, err)
+			}
+
+			if q != nil {
+				nextIndex = q.LastIndex
+			}
+
+			// WaitIndex == 0 means that this was the first ever
+			// Get() and there is no change, trigger a follow-up
+			// Get() with updated WaitIndex immediately
+			if qo.WaitIndex == 0 {
+				continue
+			}
+
+			// If Get() returned a response, check if the LastIndex
+			// is different or whether this was a timed out
+			// blocking Get() call
+			if res != nil && (q == nil || q.LastIndex != qo.WaitIndex) {
+				w.Events <- KeyValueEvent{
+					Typ:   EventTypeModify,
+					Key:   res.Key,
+					Value: res.Value,
+				}
+			}
+
+			select {
+			case <-time.After(sleepTime):
+			case <-w.stopWatch:
+				return
+			}
+		}
+	}(w)
 }
 
 // GetWatcher watches for kvstore changes in the given key. Triggers the returned channel
@@ -406,4 +452,136 @@ func (c *ConsulClient) Status() (string, error) {
 func (c *ConsulClient) DeleteTree(path string) error {
 	_, err := c.Client.KV().DeleteTree(path, nil)
 	return err
+}
+
+// Set sets value of key
+func (c *ConsulClient) Set(key string, value []byte) error {
+	_, err := c.KV().Put(&consulAPI.KVPair{Key: key, Value: value}, nil)
+	return err
+}
+
+// Delete deletes a key
+func (c *ConsulClient) Delete(key string) error {
+	_, err := c.KV().Delete(key, nil)
+	return err
+}
+
+// Get returns value of key
+func (c *ConsulClient) Get(key string) ([]byte, error) {
+	pair, _, err := c.KV().Get(key, nil)
+	if err != nil {
+		return nil, err
+	}
+	if pair == nil {
+		return nil, nil
+	}
+	return pair.Value, nil
+}
+
+// GetPrefix returns the first key which matches the prefix
+func (c *ConsulClient) GetPrefix(prefix string) ([]byte, error) {
+	pairs, _, err := c.KV().List(prefix, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+
+	return pairs[0].Value, nil
+}
+
+// CreateOnly creates a key with the value and will fail if the key already exists
+func (c *ConsulClient) CreateOnly(key string, value []byte, lease bool) error {
+	k := &consulAPI.KVPair{
+		Key:         key,
+		Value:       value,
+		CreateIndex: 0,
+	}
+
+	if lease {
+		id, ok := leaseInstance.(string)
+		if !ok {
+			return fmt.Errorf("argument not a LeaseID")
+		}
+
+		k.Session = id
+	}
+
+	success, _, err := c.KV().CAS(k, nil)
+	if !success || err != nil {
+		return fmt.Errorf("create was unsuccessful: %s", err)
+	}
+
+	return nil
+}
+
+// CreateIfExists creates a key with the value only if key condKey exists
+func (c *ConsulClient) CreateIfExists(condKey, key string, value []byte, lease bool) error {
+	if err := c.CreateOnly(key, value, lease); err != nil {
+		return err
+	}
+
+	// Consul does not support transactions which would allow to check for
+	// the presence of another key
+	masterKey, err := c.Get(condKey)
+	if err != nil || masterKey == nil {
+		c.Delete(key)
+		return fmt.Errorf("conditional key not present")
+	}
+
+	return nil
+}
+
+// ListPrefix returns a map of matching keys
+func (c *ConsulClient) ListPrefix(prefix string) (KeyValuePairs, error) {
+	pairs, _, err := c.KV().List(prefix, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	p := KeyValuePairs{}
+	for i := 0; i < len(pairs); i++ {
+		p[pairs[i].Key] = []byte(pairs[i].Value)
+	}
+
+	return p, nil
+}
+
+// CreateLease creates a new lease with the given ttl
+func (c *ConsulClient) CreateLease(ttl int64) (interface{}, error) {
+	entry := &consulAPI.SessionEntry{
+		TTL:      fmt.Sprintf("%ds", ttl),
+		Behavior: consulAPI.SessionBehaviorDelete,
+	}
+
+	id, _, err := c.Session().Create(entry, nil)
+	return id, err
+}
+
+// KeepAlive keeps a lease created with CreateLease alive
+func (c *ConsulClient) KeepAlive(lease interface{}) error {
+	id, ok := lease.(string)
+	if !ok {
+		return fmt.Errorf("argument not a LeaseID")
+	}
+
+	_, _, err := c.Session().Renew(id, nil)
+	return err
+}
+
+// DeleteLease deletes a lease
+func (c *ConsulClient) DeleteLease(lease interface{}) error {
+	id, ok := lease.(string)
+	if !ok {
+		return fmt.Errorf("argument not a LeaseID")
+	}
+
+	_, err := c.Session().Destroy(id, nil)
+	return err
+}
+
+// Close closes the kvstore client
+func (c *ConsulClient) Close() {
 }

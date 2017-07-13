@@ -20,8 +20,14 @@ import (
 	log "github.com/Sirupsen/logrus"
 )
 
-// Client is the instance of the key-value as configured
-var Client KVClient
+var (
+	// Client is the instance of the key-value as configured
+	Client KVClient
+
+	// leaseInstance is the backend specific lease object. The lease is
+	// created by initClient()
+	leaseInstance interface{}
+)
 
 func initClient() error {
 	switch backend {
@@ -55,5 +61,25 @@ func initClient() error {
 		panic("BUG: kvstore backend not specified")
 	}
 
+	l, err := CreateLease(LeaseTTL)
+	if err != nil {
+		Client = nil
+		return fmt.Errorf("Unable to create lease: %s", err)
+	}
+	leaseInstance = l
+
 	return nil
+}
+
+// CloseClient closes the kvstore client
+func CloseClient() {
+	if Client != nil {
+		if leaseInstance != nil {
+			Client.DeleteLease(leaseInstance)
+			leaseInstance = nil
+		}
+
+		Client.Close()
+		Client = nil
+	}
 }

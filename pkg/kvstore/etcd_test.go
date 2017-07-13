@@ -30,11 +30,20 @@ func Test(t *testing.T) {
 	TestingT(t)
 }
 
-type KVStore struct {
+type EtcdSuite struct {
 	etcd EtcdClient
 }
 
-var _ = Suite(&KVStore{})
+var _ = Suite(&EtcdSuite{})
+
+func (s *EtcdSuite) SetUpTest(c *C) {
+	err := SetupDummy()
+	c.Assert(err, IsNil)
+}
+
+func (s *EtcdSuite) TearDownTest(c *C) {
+	CloseClient()
+}
 
 type MaintenanceMocker struct {
 	OnAlarmList   func(ctx context.Context) (*etcdAPI.AlarmResponse, error)
@@ -79,7 +88,7 @@ func (m MaintenanceMocker) Snapshot(ctx context.Context) (io.ReadCloser, error) 
 	return nil, fmt.Errorf("Method Snapshot should not have been called")
 }
 
-func (s *KVStore) TestETCDVersionCheck(c *C) {
+func (s *EtcdSuite) TestETCDVersionCheck(c *C) {
 	badVersionStr := "3.0.0"
 	goodVersion := "3.1.0"
 	mm := MaintenanceMocker{

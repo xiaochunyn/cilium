@@ -106,8 +106,8 @@ func newEtcdClient(config *client.Config, cfgPath string) (KVClient, error) {
 			<-ec.session.Done()
 			newSession, err := concurrency.NewSession(c)
 			if err != nil {
-				log.Errorf("Error while renewing etcd session %s", err)
-				time.Sleep(10 * time.Second)
+				log.Warningf("Error while renewing etcd session %s", err)
+				time.Sleep(3 * time.Second)
 			} else {
 				ec.sessionMU.Lock()
 				ec.session = newSession
@@ -301,11 +301,6 @@ func (e *EtcdClient) SetMaxID(key string, firstID, maxID uint32) error {
 	return e.SetValue(key, maxID)
 }
 
-func (e *EtcdClient) updateSecLabelIDRef(id policy.Identity) error {
-	key := path.Join(common.LabelIDKeyPath, strconv.FormatUint(uint64(id.ID), 10))
-	return e.SetValue(key, id)
-}
-
 func (e *EtcdClient) setMaxLabelID(maxID uint32) error {
 	return e.SetMaxID(common.LastFreeLabelIDKeyPath, policy.MinimalNumericIdentity.Uint32(), maxID)
 }
@@ -327,7 +322,7 @@ func (e *EtcdClient) GASNewSecLabelID(basePath string, baseID uint32, pI *policy
 		log.Debugf("Trying to acquire a new free ID %d", *incID)
 		keyPath := path.Join(basePath, strconv.FormatUint(uint64(*incID), 10))
 
-		locker, err := e.LockPath(GetLockPath(keyPath))
+		locker, err := e.LockPath(getLockPath(keyPath))
 		if err != nil {
 			return false, err
 		}
@@ -391,7 +386,7 @@ func (e *EtcdClient) GASNewL3n4AddrID(basePath string, baseID uint32, lAddrID *t
 		log.Debugf("Trying to acquire a new free ID %d", *incID)
 		keyPath := path.Join(basePath, strconv.FormatUint(uint64(*incID), 10))
 
-		locker, err := e.LockPath(GetLockPath(keyPath))
+		locker, err := e.LockPath(getLockPath(keyPath))
 		if err != nil {
 			return err
 		}
@@ -437,6 +432,47 @@ func (e *EtcdClient) GASNewL3n4AddrID(basePath string, baseID uint32, lAddrID *t
 func (e *EtcdClient) DeleteTree(path string) error {
 	_, err := e.cli.Delete(ctx.Background(), path, client.WithPrefix())
 	return err
+}
+
+// StartWatch starts watching for changes in a prefix
+func (e *EtcdClient) StartWatch(w *Watcher) {
+	go func(w *Watcher) {
+		for {
+		recreateWatcher:
+			etcdWatch := e.cli.Watch(ctx.Background(), w.prefix, client.WithPrefix())
+
+			select {
+			case <-w.stopWatch:
+				return
+
+			case r, ok := <-etcdWatch:
+				if !ok {
+					goto recreateWatcher
+				}
+
+				if err := r.Err(); err != nil {
+					log.Debugf("etcd watcher %s received error: %s", w.name, err)
+					continue
+				}
+
+				for _, ev := range r.Events {
+					event := KeyValueEvent{
+						Key:   string(ev.Kv.Key),
+						Value: ev.Kv.Value,
+						Typ:   EventTypeModify,
+					}
+
+					if ev.Type == client.EventTypeDelete {
+						event.Typ = EventTypeDelete
+					} else if ev.IsCreate() {
+						event.Typ = EventTypeCreate
+					}
+
+					w.Events <- event
+				}
+			}
+		}
+	}(w)
 }
 
 // GetWatcher watches for kvstore changes in the given key. Triggers the returned channel
@@ -493,4 +529,163 @@ func (e *EtcdClient) Status() (string, error) {
 		}
 	}
 	return "Etcd: " + strings.Join(eps, "; "), err1
+}
+
+// Get returns value of key
+func (e *EtcdClient) Get(key string) ([]byte, error) {
+	getR, err := e.cli.Get(ctx.Background(), key)
+	if err != nil {
+		return nil, err
+	}
+
+	if getR.Count == 0 {
+		return nil, nil
+	}
+	return []byte(getR.Kvs[0].Value), nil
+}
+
+// GetPrefix returns the first key which matches the prefix
+func (e *EtcdClient) GetPrefix(prefix string) ([]byte, error) {
+	getR, err := e.cli.Get(ctx.Background(), prefix, client.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+
+	if getR.Count == 0 {
+		return nil, nil
+	}
+	return []byte(getR.Kvs[0].Value), nil
+}
+
+// Set sets value of key
+func (e *EtcdClient) Set(key string, value []byte) error {
+	_, err := e.cli.Put(ctx.Background(), key, string(value))
+	return err
+}
+
+// Delete deletes a key
+func (e *EtcdClient) Delete(key string) error {
+	_, err := e.cli.Delete(ctx.Background(), key)
+	return err
+}
+
+func createOpPut(key string, value []byte, lease bool) (*client.Op, error) {
+	if lease {
+		r, ok := leaseInstance.(*client.LeaseGrantResponse)
+		if !ok {
+			return nil, fmt.Errorf("argument not a LeaseID")
+		}
+		op := client.OpPut(key, string(value), client.WithLease(r.ID))
+		return &op, nil
+	}
+
+	op := client.OpPut(key, string(value))
+	return &op, nil
+}
+
+// CreateOnly creates a key with the value and will fail if the key already exists
+func (e *EtcdClient) CreateOnly(key string, value []byte, lease bool) error {
+	req, err := createOpPut(key, value, lease)
+	if err != nil {
+		return err
+	}
+
+	cond := client.Compare(client.Version(key), "=", 0)
+	txnresp, err := e.cli.Txn(ctx.TODO()).If(cond).Then(*req).Commit()
+	if err != nil {
+		return err
+	}
+
+	if txnresp.Succeeded == false {
+		return fmt.Errorf("create was unsuccessful")
+	}
+
+	return nil
+}
+
+// CreateIfExists creates a key with the value only if key condKey exists
+func (e *EtcdClient) CreateIfExists(condKey, key string, value []byte, lease bool) error {
+	req, err := createOpPut(key, value, lease)
+	if err != nil {
+		return err
+	}
+
+	cond := client.Compare(client.Version(condKey), "!=", 0)
+	txnresp, err := e.cli.Txn(ctx.TODO()).If(cond).Then(*req).Commit()
+	if err != nil {
+		return err
+	}
+
+	if txnresp.Succeeded == false {
+		return fmt.Errorf("create was unsuccessful")
+	}
+
+	return nil
+}
+
+// FIXME: When we rebase to etcd 3.3
+//
+// DeleteOnZeroCount deletes the key if no matching keys for prefix exist
+//func (e *EtcdClient) DeleteOnZeroCount(key, prefix string) error {
+//	txnresp, err := e.cli.Txn(ctx.TODO()).
+//		If(client.Compare(client.Version(prefix).WithPrefix(), "=", 0)).
+//		Then(client.OpDelete(key)).
+//		Commit()
+//	if err != nil {
+//		return err
+//	}
+//
+//	if txnresp.Succeeded == false {
+//		return fmt.Errorf("delete was unsuccessful")
+//	}
+//
+//	return nil
+//}
+
+// ListPrefix returns a map of matching keys
+func (e *EtcdClient) ListPrefix(prefix string) (KeyValuePairs, error) {
+	getR, err := e.cli.Get(ctx.Background(), prefix, client.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+
+	pairs := KeyValuePairs{}
+	for i := int64(0); i < getR.Count; i++ {
+		pairs[string(getR.Kvs[i].Key)] = []byte(getR.Kvs[i].Value)
+
+	}
+
+	return pairs, nil
+}
+
+// CreateLease creates a new lease with the given ttl
+func (e *EtcdClient) CreateLease(ttl int64) (interface{}, error) {
+	return e.cli.Grant(ctx.TODO(), ttl)
+}
+
+// KeepAlive keeps a lease created with CreateLease alive
+func (e *EtcdClient) KeepAlive(lease interface{}) error {
+	r, ok := lease.(*client.LeaseGrantResponse)
+	if !ok {
+		return fmt.Errorf("argument not a LeaseID")
+	}
+
+	_, err := e.cli.KeepAliveOnce(ctx.TODO(), r.ID)
+	return err
+}
+
+// DeleteLease deletes a lease
+func (e *EtcdClient) DeleteLease(lease interface{}) error {
+	r, ok := lease.(*client.LeaseGrantResponse)
+	if !ok {
+		return fmt.Errorf("argument not a LeaseID")
+	}
+
+	_, err := e.cli.Revoke(ctx.TODO(), r.ID)
+	return err
+}
+
+// Close closes the kvstore client
+func (e *EtcdClient) Close() {
+	e.cli.Close()
 }

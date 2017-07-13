@@ -22,12 +22,6 @@ import (
 	"github.com/cilium/cilium/pkg/policy"
 )
 
-// Supported key-value store types.
-const (
-	Consul = "consul"
-	Etcd   = "etcd"
-)
-
 type KVClient interface {
 	LockPath(path string) (KVLocker, error)
 	GetValue(k string) (json.RawMessage, error)
@@ -44,13 +38,94 @@ type KVClient interface {
 	GetWatcher(key string, timeSleep time.Duration) <-chan []policy.NumericIdentity
 
 	Status() (string, error)
+
+	// Get returns value of key
+	Get(key string) ([]byte, error)
+
+	// GetPrefix returns the first key which matches the prefix
+	GetPrefix(prefix string) ([]byte, error)
+
+	// Set sets value of key
+	Set(key string, value []byte) error
+
+	// Delete deletes a key
+	Delete(key string) error
+
+	// CreateOnly atomically creates a key or fails if it already exists
+	CreateOnly(key string, value []byte, lease bool) error
+
+	// CreateIfExists creates a key with the value only if key condKey exists
+	CreateIfExists(condKey, key string, value []byte, lease bool) error
+
+	// ListPrefix returns a list of keys matching the prefix
+	ListPrefix(prefix string) (KeyValuePairs, error)
+
+	// StartWatch starts watching for changes in a prefix
+	StartWatch(w *Watcher)
+
+	// CreateLease creates a lease with the specified ttl
+	CreateLease(ttl int64) (interface{}, error)
+
+	// KeepAlive keeps a lease previously created with CreateLease alive
+	KeepAlive(lease interface{}) error
+
+	// DeleteLease deletes a lease
+	DeleteLease(interface{}) error
+
+	// Close closes the kvstore client
+	Close()
 }
 
 type KVLocker interface {
 	Unlock() error
 }
 
-// GetLockPath returns the lock path representation of the given path.
-func GetLockPath(path string) string {
+// getLockPath returns the lock path representation of the given path.
+func getLockPath(path string) string {
 	return path + ".lock"
 }
+
+// Get returns value of key
+func Get(key string) ([]byte, error) {
+	v, err := Client.Get(key)
+	trace("Get %s => %v err=%v", key, v, err)
+	return v, err
+}
+
+// GetPrefix returns the first key which matches the prefix
+func GetPrefix(prefix string) ([]byte, error) {
+	v, err := Client.GetPrefix(prefix)
+	trace("GetPrefix %s -> %v (err=%v)", prefix, v, err)
+	return v, err
+}
+
+// ListPrefix returns the list of keys matching the prefix
+func ListPrefix(prefix string) (KeyValuePairs, error) {
+	v, err := Client.ListPrefix(prefix)
+	trace("ListPrefix %s -> %d entries (err=%v)", prefix, len(v), err)
+	return v, err
+}
+
+// CreateOnly atomically creates a key or fails if it already exists
+func CreateOnly(key string, value []byte, lease bool) error {
+	err := Client.CreateOnly(key, value, lease)
+	trace("CreateOnly %s=%v lease=%v -> err=%v", key, value, lease, err)
+	return err
+}
+
+// CreateIfExists creates a key with the value only if key condKey exists
+func CreateIfExists(condKey, key string, value []byte, lease bool) error {
+	err := Client.CreateIfExists(condKey, key, value, lease)
+	trace("CreateIfExists if %s; then %s=%v lease=%v -> err=%v", condKey, key, value, lease, err)
+	return err
+}
+
+// Delete deletes a key
+func Delete(key string) error {
+	err := Client.Delete(key)
+	trace("Delete %s -> err=%v", key, err)
+	return err
+}
+
+// KeyValuePairs is a map of key=value pairs
+type KeyValuePairs map[string][]byte
