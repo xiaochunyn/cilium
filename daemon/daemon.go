@@ -686,43 +686,41 @@ func (c *Config) createIPAMConf() (*ipam.IPAMConfig, error) {
 		IPv6Allocator: ipallocator.NewCIDRRange(nodeaddress.GetIPv6AllocRange()),
 	}
 
-	if !c.IPv4Disabled {
-		ipamConf.IPv4Allocator = ipallocator.NewCIDRRange(nodeaddress.GetIPv4AllocRange())
-		ipamConf.IPAMConfig.Routes = append(ipamConf.IPAMConfig.Routes,
-			// IPv4
-			cniTypes.Route{
-				Dst: nodeaddress.GetIPv4NodeRoute(),
-			},
-			cniTypes.Route{
-				Dst: nodeaddress.IPv4DefaultRoute,
-				GW:  nodeaddress.GetInternalIPv4(),
-			})
+	ipamConf.IPv4Allocator = ipallocator.NewCIDRRange(nodeaddress.GetIPv4AllocRange())
+	ipamConf.IPAMConfig.Routes = append(ipamConf.IPAMConfig.Routes,
+		// IPv4
+		cniTypes.Route{
+			Dst: nodeaddress.GetIPv4NodeRoute(),
+		},
+		cniTypes.Route{
+			Dst: nodeaddress.IPv4DefaultRoute,
+			GW:  nodeaddress.GetInternalIPv4(),
+		})
 
-		// Reserve the IPv4 router IP if it is part of the IPv4
-		// allocation range to ensure that we do not hand out the
-		// router IP to a container.
-		allocRange := nodeaddress.GetIPv4AllocRange()
-		nodeIP := nodeaddress.GetExternalIPv4()
-		if allocRange.Contains(nodeIP) {
-			err := ipamConf.IPv4Allocator.Allocate(nodeIP)
-			if err != nil {
-				log.Debugf("Unable to reserve IPv4 router address '%s': %s",
-					nodeIP, err)
-			}
-		}
-
-		internalIP, err := ipamConf.IPv4Allocator.AllocateNext()
+	// Reserve the IPv4 router IP if it is part of the IPv4
+	// allocation range to ensure that we do not hand out the
+	// router IP to a container.
+	allocRange := nodeaddress.GetIPv4AllocRange()
+	nodeIP := nodeaddress.GetExternalIPv4()
+	if allocRange.Contains(nodeIP) {
+		err := ipamConf.IPv4Allocator.Allocate(nodeIP)
 		if err != nil {
-			log.Fatalf("Unable to allocate internal IPv4 node IP: %s", err)
+			log.Debugf("Unable to reserve IPv4 router address '%s': %s",
+				nodeIP, err)
 		}
-
-		nodeaddress.SetInternalIPv4(internalIP)
 	}
+
+	internalIP, err := ipamConf.IPv4Allocator.AllocateNext()
+	if err != nil {
+		log.Fatalf("Unable to allocate internal IPv4 node IP: %s", err)
+	}
+
+	nodeaddress.SetInternalIPv4(internalIP)
 
 	// Reserve the IPv6 router and node IP if it is part of the IPv6
 	// allocation range to ensure that we do not hand out the router IP to
 	// a container.
-	allocRange := nodeaddress.GetIPv6AllocRange()
+	allocRange = nodeaddress.GetIPv6AllocRange()
 	for _, ip6 := range []net.IP{nodeaddress.GetIPv6()} {
 		if allocRange.Contains(ip6) {
 			err := ipamConf.IPv6Allocator.Allocate(ip6)

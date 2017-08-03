@@ -8,11 +8,15 @@ set -e
 
 sudo mkdir -p /etc/etcd/
 
-wget -nv https://github.com/coreos/etcd/releases/download/${etcd_version}/etcd-${etcd_version}-linux-amd64.tar.gz
+#wget -nv https://github.com/coreos/etcd/releases/download/${etcd_version}/etcd-${etcd_version}-linux-amd64.tar.gz
+
+cd /home/vagrant/go/src/github.com/cilium/cilium/examples/kubernetes-ingress/scripts
 
 tar -xvf etcd-${etcd_version}-linux-amd64.tar.gz
 
 sudo mv etcd-${etcd_version}-linux-amd64/etcd* /usr/bin/
+
+cd -
 
 sudo mkdir -p /var/lib/etcd
 

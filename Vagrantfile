@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
@@ -136,12 +137,13 @@ Vagrant.configure(2) do |config|
                 type: "shell",
                 run: "always",
                 inline: "ip -6 a a #{$master_ipv6}/16 dev enp0s9"
+                node_ip = $master_ipv6
         end
         cm.vm.hostname = "cilium#{$k8stag}-master"
         if ENV['CILIUM_TEMP'] then
            if ENV["K8S"] then
                k8sinstall = "#{ENV['CILIUM_TEMP']}/cilium-k8s-install-1st-part.sh"
-               cm.vm.provision "shell", privileged: true, path: k8sinstall
+               cm.vm.provision "shell", env: {"node_ip" => node_ip}, privileged: true, path: k8sinstall
            end
            script = "#{ENV['CILIUM_TEMP']}/cilium-master.sh"
            cm.vm.provision "config-install", type: "shell", privileged: true, run: "always", path: script
@@ -177,12 +179,13 @@ Vagrant.configure(2) do |config|
                     type: "shell",
                     run: "always",
                     inline: "ip -6 a a #{ipv6_addr}/16 dev enp0s9"
+                node_ip = ipv6_addr
             end
             node.vm.hostname = "cilium#{$k8stag}-node-#{n+2}"
             if ENV['CILIUM_TEMP'] then
                 if ENV["K8S"] then
                     k8sinstall = "#{ENV['CILIUM_TEMP']}/cilium-k8s-install-1st-part.sh"
-                    node.vm.provision "shell", privileged: true, path: k8sinstall
+                    node.vm.provision "shell", env: {"node_ip" => node_ip}, privileged: true, path: k8sinstall
                 end
                 script = "#{ENV['CILIUM_TEMP']}/node-start-#{n+2}.sh"
                 node.vm.provision "config-install", type: "shell", privileged: true, run: "always", path: script

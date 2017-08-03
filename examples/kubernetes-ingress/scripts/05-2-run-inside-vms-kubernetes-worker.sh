@@ -30,11 +30,15 @@ wget -nv https://storage.googleapis.com/kubernetes-release/network-plugins/cni-0
 
 sudo tar -xvf cni-07a8a28637e97b22eb8dfe710eeae1344f69d16e.tar.gz -C /opt/cni
 
-wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubelet
+#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubelet
+
+cd /home/vagrant/go/src/github.com/cilium/cilium/examples/kubernetes-ingress/scripts
 
 chmod +x kubelet
 
-sudo mv kubelet /usr/bin/
+sudo cp kubelet /usr/bin/
+
+cd -
 
 sudo mkdir -p /var/lib/kubelet/
 
@@ -72,6 +76,7 @@ ExecStartPre=/bin/bash -c ' \\
 ExecStart=/usr/bin/kubelet \\
   --allow-privileged=true \\
   --api-servers=http://${controllers_ips[0]}:8080 \\
+  --node-ip=${node_ip} \\
   --cloud-provider= \\
   --make-iptables-util-chains=false \\
   --cluster-dns=${cluster_dns_ip} \\

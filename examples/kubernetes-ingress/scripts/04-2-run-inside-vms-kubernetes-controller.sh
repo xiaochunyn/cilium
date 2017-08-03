@@ -8,17 +8,21 @@ set -e
 
 sudo mkdir -p /var/lib/kubernetes
 
-wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-apiserver
+#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-apiserver
+#
+#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-controller-manager
+#
+#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-scheduler
+#
+#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
 
-wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-controller-manager
-
-wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-scheduler
-
-wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
+cd /home/vagrant/go/src/github.com/cilium/cilium/examples/kubernetes-ingress/scripts
 
 chmod +x kube-apiserver kube-controller-manager kube-scheduler kubectl
 
-sudo mv kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/bin/
+sudo cp kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/bin/
+
+cd -
 
 sudo cp "${dir}/../deployments/token.csv" /var/lib/kubernetes/
 sudo cp "${dir}/../deployments/authorization-policy.jsonl" /var/lib/kubernetes/
