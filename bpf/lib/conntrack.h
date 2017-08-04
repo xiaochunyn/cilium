@@ -509,6 +509,9 @@ static inline int __inline__ ct_lookup4(void *map, struct ipv4_ct_tuple *tuple,
 	cilium_trace3(skb, DBG_CT_LOOKUP4_1, tuple->saddr, tuple->daddr,
 		      (bpf_ntohs(tuple->sport) << 16) | bpf_ntohs(tuple->dport));
 	cilium_trace3(skb, DBG_CT_LOOKUP4_2, (tuple->nexthdr << 8) | tuple->flags, 0, 0);
+	cilium_trace3(skb, DBG_CT_LOOKUP4_1, rev_tuple.saddr, rev_tuple.daddr,
+		      (bpf_ntohs(rev_tuple.sport) << 16) | bpf_ntohs(rev_tuple.dport));
+	cilium_trace3(skb, DBG_CT_LOOKUP4_2, (rev_tuple.nexthdr << 8) | rev_tuple.flags, 0, 0);
 #endif
 	if ((ret = __ct_lookup(map, skb, &rev_tuple, action, dir, ct_state)) != CT_NEW) {
 		if (likely(ret == CT_ESTABLISHED)) {
@@ -683,6 +686,10 @@ static inline int __inline__ ct_create4(void *map, struct ipv4_ct_tuple *tuple,
 
 	cilium_trace3(skb, DBG_CT_CREATED4, entry.proxy_port << 16 | entry.rev_nat_index,
 		      ct_state->src_sec_id, ct_state->addr);
+
+	cilium_trace3(skb, DBG_CT_LOOKUP4_1, tuple->saddr, tuple->daddr,
+		      (bpf_ntohs(tuple->sport) << 16) | bpf_ntohs(tuple->dport));
+	cilium_trace3(skb, DBG_CT_LOOKUP4_2, (tuple->nexthdr << 8) | tuple->flags, 0, 0);
 
 	entry.src_sec_id = ct_state->src_sec_id;
 	if (map_update_elem(map, tuple, &entry, 0) < 0)
