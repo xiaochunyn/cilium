@@ -428,7 +428,8 @@ static inline int __inline__ svc_lookup4(struct __sk_buff *skb, struct iphdr *ip
 
 		if (ct_state.rev_nat_index) {
 			ret = lb4_rev_nat(skb, ETH_HLEN, l4_off, &csum_off,
-					  &ct_state, &tuple, 0);
+					  ct_state.loopback, &tuple,
+					  ct_state.rev_nat_index, 0);
 			if (IS_ERR(ret))
 				return TC_ACT_OK;
 		}
@@ -525,8 +526,8 @@ static inline int handle_ipv4(struct __sk_buff *skb, __u32 revnat)
 				return TC_ACT_OK;
 
 			return ipv4_local_delivery(skb, ETH_HLEN, l4_off, secctx, ip4, ep);
-		} else {
 #ifdef ENCAP_IFINDEX
+		} else {
 			/* IPv4 lookup key: daddr & IPV4_MASK */
 			struct endpoint_key key = {};
 
@@ -539,6 +540,20 @@ static inline int handle_ipv4(struct __sk_buff *skb, __u32 revnat)
 			cilium_trace(skb, DBG_NETDEV_ENCAP4, key.ip4, secctx);
 			return encap_and_redirect(skb, &key, secctx);
 #endif /* ENCAP_IFINDEX */
+		}
+	} else {
+		struct ipv4_ct_tuple tuple = {};
+		struct csum_offset csum_off = {};
+		struct ct_state ct_state = {};
+		int ret, l4_off;
+
+		l4_off = ct_extract_tuple4(&tuple, ip4, ETH_HLEN, CT_EGRESS);
+		csum_l4_offset_and_flags(tuple.nexthdr, &csum_off);
+
+		ret = ct_lookup4(&CT_MAP4, &tuple, skb, l4_off, CT_EGRESS, &ct_state);
+		if (unlikely(ret == CT_REPLY && ct_state.rev_nat_index)) {
+			lb4_rev_nat(skb, ETH_HLEN, l4_off, &csum_off, ct_state.loopback,
+				    &tuple, ct_state.rev_nat_index, REV_NAT_F_TUPLE_SADDR);
 		}
 	}
 #endif
@@ -694,8 +709,8 @@ static inline int __inline__ ipv4_policy(struct __sk_buff *skb, int ifindex, __u
 		int ret2;
 
 		ret2 = lb4_rev_nat(skb, ETH_HLEN, l4_off, &csum_off,
-				   &ct_state, &tuple,
-				   REV_NAT_F_TUPLE_SADDR);
+				   ct_state.loopback, &tuple,
+				   ct_state.rev_nat_index, REV_NAT_F_TUPLE_SADDR);
 		if (IS_ERR(ret2))
 			return ret2;
 

@@ -57,3 +57,5 @@
 #define CT_MAP6 cilium_ct6_global
 #define CT_MAP4 cilium_ct4_global
 #define CT_MAP_SIZE 4096
+#define NAT_IN_IFINDEX 1
+#define NAT_OUT_IFINDEX 1

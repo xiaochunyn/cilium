@@ -77,6 +77,61 @@ function bpf_compile()
 	tc filter add dev $DEV $WHERE prio 1 handle 1 bpf da obj $OUT sec $SEC
 }
 
+function setup_nat_box()
+{
+	# create ingress veth pair
+	ip link del cilium-nat-in 2> /dev/null || true
+	ip link add cilium-nat-in type veth peer name cilium-nat-in2
+	ip link set cilium-nat-in up
+	ip link set cilium-nat-in2 up
+	sysctl -w net.ipv4.conf.cilium-nat-in.forwarding=1
+	sysctl -w net.ipv6.conf.cilium-nat-in.forwarding=1
+	sysctl -w net.ipv4.conf.cilium-nat-in2.forwarding=1
+	sysctl -w net.ipv6.conf.cilium-nat-in2.forwarding=1
+	NAT_IN_IDX=$(cat /sys/class/net/cilium-nat-in/ifindex)
+	NAT_IN2_IDX=$(cat /sys/class/net/cilium-nat-in2/ifindex)
+	ip rule add iif $NAT_IN_IDX table 2000
+
+	sed -i '/^#define NAT_IN_IFINDEX.*$/d' $RUNDIR/globals/node_config.h
+	echo "#define NAT_IN_IFINDEX $NAT_IN_IDX" >> $RUNDIR/globals/node_config.h
+
+	CALLS_MAP="cilium_calls_netdev_pre"
+	OPTS="-DCALLS_MAP=$CALLS_MAP"
+	bpf_compile cilium-nat-in "$OPTS" "ingress" bpf_nat_rev_out.c bpf_nat_rev_out.o from-netdev $CALLS_MAP
+
+	# create egress veth pair
+	ip link del cilium-nat-out 2> /dev/null || true
+	ip link add cilium-nat-out type veth peer name cilium-nat-out2
+	ip link set cilium-nat-out up
+	ip link set cilium-nat-out2 up
+	sysctl -w net.ipv4.conf.cilium-nat-out.forwarding=1
+	sysctl -w net.ipv6.conf.cilium-nat-out.forwarding=1
+	sysctl -w net.ipv4.conf.cilium-nat-out2.forwarding=1
+	sysctl -w net.ipv6.conf.cilium-nat-out2.forwarding=1
+	NAT_OUT_IDX=$(cat /sys/class/net/cilium-nat-out/ifindex)
+	NAT_OUT2_IDX=$(cat /sys/class/net/cilium-nat-out2/ifindex)
+	ip rule add iif $NAT_OUT2_IDX table 2001
+
+	sed -i '/^#define NAT_OUT_IFINDEX.*$/d' $RUNDIR/globals/node_config.h
+	echo "#define NAT_OUT_IFINDEX $NAT_OUT_IDX" >> $RUNDIR/globals/node_config.h
+
+	if [ -n "$IP4_HOST" ]; then
+		# add default ipv4 route
+		ip route add table 2000 $IP4_HOST/32 dev cilium-nat-out2
+		ip route add table 2000 default via $IP4_HOST
+		ip route add table 2001 $IP4_HOST/32 dev cilium-nat-in2
+		ip route add table 2001 default via $IP4_HOST
+	fi
+
+	#if [ -n "$IP6_HOST" ]; then
+		# FIXME add default ipv6 route
+		#ip -6 route add table 2000 $IP6_HOST/128 dev cilium-nat-out2
+		#ip -6 route add table 2000 default via $IP6_HOST
+		#ip -6 route add table 2001 $IP6_HOST/128 dev cilium-nat-in2
+		#ip -6 route add table 2001 default via $IP6_HOST
+	#fi
+}
+
 # This directory was created by the daemon and contains the per container header file
 DIR="$PWD/globals"
 CLANG_OPTS="-D__NR_CPUS__=$(nproc) -O2 -target bpf -I$DIR -I. -I$LIB/include -DENABLE_ARP_RESPONDER -DHANDLE_NS -Wno-address-of-packed-member -Wno-unknown-warning-option"
@@ -135,6 +190,8 @@ if [ "$IP4_SVC_RANGE" != "auto" ]; then
 	ip route del $IP4_SVC_RANGE 2> /dev/null || true
 	ip route add $IP4_SVC_RANGE via 169.254.254.1 src $IP4_HOST
 fi
+
+setup_nat_box
 
 if [ "$TUNNEL_MODE" != "disabled" ]; then
 	ENCAP_DEV="cilium_${TUNNEL_MODE}"

@@ -172,6 +172,7 @@ static inline int __inline__ __ct_lookup(void *map, struct __sk_buff *skb,
 			ct_state->rev_nat_index = entry->rev_nat_index;
 			ct_state->loopback = entry->lb_loopback;
 			ct_state->proxy_port = entry->proxy_port;
+			ct_state->snat = entry->snat;
 		}
 
 #ifdef LXC_NAT46

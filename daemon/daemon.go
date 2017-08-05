@@ -400,7 +400,10 @@ func reserveLocalRoutes(ipam *ipam.IPAMConfig) {
 }
 
 const (
-	ciliumChain = "CILIUM_POST"
+	ciliumChain           = "CILIUM_POST"
+	ciliumPreRawChain     = "CILIUM_PRE_RAW"
+	ciliumPreMangleChain  = "CILIUM_PRE_MANGLE"
+	ciliumPostMangleChain = "CILIUM_POST_MANGLE"
 )
 
 func (d *Daemon) removeMasqRule() {
@@ -423,6 +426,20 @@ func (d *Daemon) installMasqRule() error {
 		"-N", ciliumChain}, false); err != nil {
 		return err
 	}
+
+	// iptables -t raw -A PREROUTING -j CT --zone mark --zone-dir ORIGINAL
+
+	if err := runProg("iptables", []string{
+		"-t", "nat",
+		"-A", ciliumChain,
+		"-o", "cilium-nat-out2",
+		"-m", "comment", "--comment", "cilium SNAT",
+		"-j", "SNAT", "--to-source", nodeaddress.GetExternalIPv4().String()}, false); err != nil {
+		return err
+	}
+
+	// iptables -t mangle -A PREROUTING -m conntrack --ctdir ORIGINAL -j CONNMARK --save-mark
+	// iptables -t mangle -A POSTROUTING -m conntrack --ctdir REPLY -j CONNMARK --restore-mark
 
 	if tunnelMode == tunnelModeDisabled {
 		// When tunneling is disabled, masquerade all traffic that:
@@ -466,6 +483,12 @@ func (d *Daemon) installMasqRule() error {
 		"-j", "MASQUERADE"}, false); err != nil {
 		return err
 	}
+
+	// Hook POSTROUTING into Cilium POSTROUTING chain
+	runProg("iptables", []string{
+		"-t", "raw",
+		"-A", "PREROUTING",
+		"-j", ciliumPreRawChain}, false)
 
 	// Hook POSTROUTING into Cilium POSTROUTING chain
 	return runProg("iptables", []string{
