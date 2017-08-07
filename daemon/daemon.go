@@ -521,11 +521,13 @@ func (d *Daemon) compileBase() error {
 
 	reserveLocalRoutes(d.ipamConf)
 
-	// Always remove masquerade rule and then re-add it if required
-	d.removeMasqRule()
-	if masquerade && d.conf.Device == "undefined" {
-		if err := d.installMasqRule(); err != nil {
-			return err
+	if !d.conf.IPv4Disabled {
+		// Always remove masquerade rule and then re-add it if required
+		d.removeMasqRule()
+		if masquerade && d.conf.Device == "undefined" {
+			if err := d.installMasqRule(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -576,11 +578,13 @@ func (d *Daemon) init() error {
 
 	fw.WriteString(common.FmtDefineComma("ROUTER_IP", routerIP))
 
-	ipv4GW := nodeaddress.GetInternalIPv4()
-	fmt.Fprintf(fw, "#define IPV4_GATEWAY %#x\n", byteorder.HostSliceToNetwork(ipv4GW, reflect.Uint32).(uint32))
-
 	if !d.conf.IPv4Disabled {
+		ipv4GW := nodeaddress.GetInternalIPv4()
+		fmt.Fprintf(fw, "#define IPV4_GATEWAY %#x\n", byteorder.HostSliceToNetwork(ipv4GW, reflect.Uint32).(uint32))
 		fmt.Fprintf(fw, "#define IPV4_LOOPBACK %#x\n", byteorder.HostSliceToNetwork(d.loopbackIPv4, reflect.Uint32).(uint32))
+	} else {
+		fmt.Fprintf(fw, "#define IPV4_GATEWAY %#x\n", 0)
+		fmt.Fprintf(fw, "#define IPV4_LOOPBACK %#x\n", 0)
 	}
 
 	ipv4Range := nodeaddress.GetIPv4AllocRange()
