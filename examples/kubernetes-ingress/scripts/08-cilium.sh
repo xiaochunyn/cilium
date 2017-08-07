@@ -8,6 +8,8 @@ set -e
 
 kubectl create -f "${dir}/../network-policy/" || true
 
+kubectl create -f "${dir}/../../kubernetes/rbac.yaml" || true
+
 kubectl get networkpolicy
 
 cilium policy get

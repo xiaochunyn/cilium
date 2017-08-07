@@ -210,11 +210,13 @@ function write_k8s_install() {
         k8s_cluster_cidr+="/96"
         k8s_node_cidr_mask_size="112"
         k8s_service_cluster_ip_range="FD03::/112"
+        k8s_cluster_api_server_ip="FD03::1"
         k8s_cluster_dns_ip="FD03::A"
     fi
     k8s_cluster_cidr=${k8s_cluster_cidr:-"10.0.0.0/10"}
     k8s_node_cidr_mask_size=${k8s_node_cidr_mask_size:-"16"}
     k8s_service_cluster_ip_range=${k8s_service_cluster_ip_range:-"172.20.0.0/24"}
+    k8s_cluster_api_server_ip=${k8s_cluster_api_server_ip:-"172.20.0.1"}
     k8s_cluster_dns_ip=${k8s_cluster_dns_ip:-"172.20.0.10"}
 
     cat <<EOF >> "${filename}"
@@ -224,8 +226,10 @@ export IPV6_EXT="${IPV6_EXT}"
 export K8S_CLUSTER_CIDR="${k8s_cluster_cidr}"
 export K8S_NODE_CDIR_MASK_SIZE="${k8s_node_cidr_mask_size}"
 export K8S_SERVICE_CLUSTER_IP_RANGE="${k8s_service_cluster_ip_range}"
+export K8S_CLUSTER_API_SERVER_IP="${k8s_cluster_api_server_ip}"
 export K8S_CLUSTER_DNS_IP="${k8s_cluster_dns_ip}"
 if [[ "\$(hostname)" -eq "cilium${K8STAG}-master" ]]; then
+    INSTALL=1 "\${k8s_path}/02-create-certs.sh"
     "\${k8s_path}/03-2-run-inside-vms-etcd.sh"
     "\${k8s_path}/04-2-run-inside-vms-kubernetes-controller.sh"
 fi
@@ -244,6 +248,7 @@ export IPV6_EXT="${IPV6_EXT}"
 export K8S_CLUSTER_CIDR="${k8s_cluster_cidr}"
 export K8S_NODE_CDIR_MASK_SIZE="${k8s_node_cidr_mask_size}"
 export K8S_SERVICE_CLUSTER_IP_RANGE="${k8s_service_cluster_ip_range}"
+export K8S_CLUSTER_API_SERVER_IP="${k8s_cluster_api_server_ip}"
 export K8S_CLUSTER_DNS_IP="${k8s_cluster_dns_ip}"
 export K8STAG="${K8STAG}"
 export NWORKERS="${NWORKERS}"
@@ -273,7 +278,7 @@ function write_cilium_cfg() {
     fi
 
     if [ -n "${K8S}" ]; then
-        cilium_options+=" --k8s-api-server http://${MASTER_IPV4}:8080"
+        cilium_options+=" --k8s-kubeconfig-path /var/lib/cilium/cilium.kubeconfig"
         cilium_options+=" --kvstore-opt etcd.config=/var/lib/cilium/etcd-config.yml"
         cilium_options+=" --kvstore etcd"
     else

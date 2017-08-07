@@ -12,18 +12,36 @@ if [ -n "${INSTALL}" ]; then
     sudo mv kubectl /usr/local/bin
 fi
 
-KUBERNETES_PUBLIC_ADDRESS=${kubernetes_master:-"192.168.33.11"}
+certs_dir="${dir}/certs"
 
-kubectl config set-cluster cilium-k8s-local \
-  --server=http://${KUBERNETES_PUBLIC_ADDRESS}:8080
+mkdir -p /home/vagrant/.kube/certs
 
-kubectl config set-credentials admin --token chAng3m3
+cp "${certs_dir}/k8s-admin.pem" \
+   "${certs_dir}/k8s-admin-key.pem" \
+   "${certs_dir}/ca-k8s.pem" \
+   /home/vagrant/.kube/certs
 
-kubectl config set-context default-context \
-  --cluster=cilium-k8s-local \
-  --user=admin
+kubectl config set-cluster kubernetes \
+    --certificate-authority=/home/vagrant/.kube/certs/ca-k8s.pem \
+    --embed-certs=true \
+    --server=https://${kubernetes_master}:6443
 
-kubectl config use-context default-context
+kubectl config set-credentials admin \
+    --client-certificate=/home/vagrant/.kube/certs/k8s-admin.pem \
+    --client-key=/home/vagrant/.kube/certs/k8s-admin-key.pem \
+    --embed-certs=true
+
+kubectl config set-context default \
+    --cluster=kubernetes \
+    --user=admin
+
+kubectl config use-context default
+
+sudo cp /root/.kube/config /home/vagrant/.kube/config
+
+sudo chmod 755 /home/vagrant/.kube/config
+
+sudo chown vagrant.vagrant -R /home/vagrant/.kube
 
 until kubectl get componentstatuses
 do
