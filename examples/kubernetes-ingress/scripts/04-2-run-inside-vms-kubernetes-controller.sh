@@ -24,13 +24,13 @@ cp "${certs_dir}/ca-k8s.pem" \
    "${certs_dir}/k8s-kubelet.pem" \
    /var/lib/kubernetes
 
-#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-apiserver
-#
+wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-apiserver
+
 #wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-controller-manager
-#
-#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-scheduler
-#
-#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
+
+wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kube-scheduler
+
+wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
 
 cd /home/vagrant/go/src/github.com/cilium/cilium/examples/kubernetes-ingress/scripts
 

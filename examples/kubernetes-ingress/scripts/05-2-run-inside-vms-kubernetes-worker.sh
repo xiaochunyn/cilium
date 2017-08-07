@@ -14,7 +14,7 @@ wget -nv https://storage.googleapis.com/kubernetes-release/network-plugins/cni-a
 
 sudo tar -xvf cni-amd64-0799f5732f2a11b329d9e3d51b9c8f2e3759f2ff.tar.gz -C /opt/cni
 
-#wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
+wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
 #wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubelet
 
 cd /home/vagrant/go/src/github.com/cilium/cilium/examples/kubernetes-ingress/scripts
