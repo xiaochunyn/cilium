@@ -26,8 +26,10 @@ import (
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/k8s"
 	"github.com/cilium/cilium/pkg/policy"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"github.com/spf13/cobra"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"os"
 )
 
 const (
@@ -36,15 +38,15 @@ const (
 
 var src, dst, dports []string
 var srcIdentity, dstIdentity int64
-var srcEndpoint, dstEndpoint, srcK8sPod, dstK8sPod string
+var srcEndpoint, dstEndpoint, srcK8sPod, dstK8sPod, srcK8sYaml, dstK8sYaml string
 var verbose bool
 
 // policyTraceCmd represents the policy_trace command
 var policyTraceCmd = &cobra.Command{
-	Use:   "trace ( -s <label context> | --src-identity <security identity> | --src-endpoint <endpoint ID> | --src-k8s-pod <namespace:pod-name> ) ( -d <label context> | --dst-identity <security identity> | --dst-endpoint <endpoint ID> | --dst-k8s-pod <namespace:pod-name> ) [--dport <port>[/<protocol>]",
+	Use:   "trace ( -s <label context> | --src-identity <security identity> | --src-endpoint <endpoint ID> | --src-k8s-pod <namespace:pod-name> | --src-k8s-yaml <path to YAML file> ) ( -d <label context> | --dst-identity <security identity> | --dst-endpoint <endpoint ID> | --dst-k8s-pod <namespace:pod-name> | --dst-k8s-yaml <path to YAML file>) [--dport <port>[/<protocol>]",
 	Short: "Trace a policy decision",
-	Long: `Verifies if source ID or LABEL(s) is allowed to consume
-destination ID or LABEL(s). LABEL is represented as
+	Long: `Verifies if the source is allowed to consume
+destination. Source / destination can be provided as endpoint ID, security ID, Kubernetes Pod, set of LABELs. LABEL is represented as
 SOURCE:KEY[=VALUE].
 dports can be can be for example: 80/tcp, 53 or 23/udp.`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -53,11 +55,11 @@ dports can be can be for example: 80/tcp, 53 or 23/udp.`,
 		var dPorts []*models.Port
 		var err error
 
-		if len(src) == 0 && srcIdentity == defaultSecurityID && srcEndpoint == "" && srcK8sPod == "" {
+		if len(src) == 0 && srcIdentity == defaultSecurityID && srcEndpoint == "" && srcK8sPod == "" && srcK8sYaml == "" {
 			Usagef(cmd, "Missing source argument")
 		}
 
-		if len(dst) == 0 && dstIdentity == defaultSecurityID && dstEndpoint == "" && dstK8sPod == "" {
+		if len(dst) == 0 && dstIdentity == defaultSecurityID && dstEndpoint == "" && dstK8sPod == "" && dstK8sYaml == "" {
 			Usagef(cmd, "Missing destination argument")
 		}
 
@@ -115,6 +117,23 @@ dports can be can be for example: 80/tcp, 53 or 23/udp.`,
 			dstSlice = appendIdentityLabelsToSlice(id, dstSlice)
 		}
 
+		if srcK8sYaml != "" {
+			reader, err := os.Open(srcK8sYaml)
+			if err != nil {
+				Fatalf("%s", err)
+			}
+			// TODO: What to use for buffer size?
+			//yamlDecoder := yaml.NewYAMLOrJSONDecoder(reader,512*1024).Decode()
+			yToJDecoder := yaml.NewYAMLToJSONDecoder(reader)
+			//yToJDecoder.
+			// Make the compiler happy
+			fmt.Printf("yToJDecoder: %v", yToJDecoder)
+		}
+
+		if dstK8sYaml != "" {
+
+		}
+
 		search := models.IdentityContext{
 			From:    srcSlice,
 			To:      dstSlice,
@@ -144,6 +163,8 @@ func init() {
 	policyTraceCmd.Flags().StringVarP(&dstEndpoint, "dst-endpoint", "", "", "Destination endpoint")
 	policyTraceCmd.Flags().StringVarP(&srcK8sPod, "src-k8s-pod", "", "", "Source k8s pod ([namespace:]podname)")
 	policyTraceCmd.Flags().StringVarP(&dstK8sPod, "dst-k8s-pod", "", "", "Destination k8s pod ([namespace:]podname)")
+	policyTraceCmd.Flags().StringVarP(&srcK8sYaml, "src-k8s-yaml", "", "", "Path to YAML file for source")
+	policyTraceCmd.Flags().StringVarP(&dstK8sYaml, "src-k8s-yaml", "", "", "Path to YAML file for destination")
 }
 
 func appendIdentityLabelsToSlice(secID string, labelSlice []string) []string {
