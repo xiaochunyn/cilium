@@ -30,11 +30,14 @@ import (
 	"github.com/spf13/cobra"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
+	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"k8s.io/client-go/pkg/api/v1"
 )
 
 const (
 	defaultSecurityID = -1
 )
+
 
 var src, dst, dports []string
 var srcIdentity, dstIdentity int64
@@ -119,15 +122,42 @@ dports can be can be for example: 80/tcp, 53 or 23/udp.`,
 
 		if srcK8sYaml != "" {
 			reader, err := os.Open(srcK8sYaml)
+			defer reader.Close()
 			if err != nil {
 				Fatalf("%s", err)
 			}
 			// TODO: What to use for buffer size?
 			//yamlDecoder := yaml.NewYAMLOrJSONDecoder(reader,512*1024).Decode()
-			yToJDecoder := yaml.NewYAMLToJSONDecoder(reader)
-			//yToJDecoder.
+			//yamlDecoder := yaml.NewYAMLToJSONDecoder(reader)
+			yamlDecoder := yaml.NewDocumentDecoder(reader)
+			//yamlDecoder.
 			// Make the compiler happy
-			fmt.Printf("yToJDecoder: %v", yToJDecoder)
+			//fmt.Printf("yamlDecoder: %v", yamlDecoder)
+
+			splitReader := yamlDecoder.Read()
+			var deployment v1beta1.Deployment
+			var rep v1beta1.ReplicaSet
+			var controller v1.ReplicationController
+			err = yamlDecoder.Decode(&deployment)
+			if err != nil {
+				fmt.Printf("error: %s", err)
+			}
+			err = yamlDecoder.Decode(&rep)
+			if err != nil {
+				fmt.Printf("error: %s", err)
+			}
+			err = yamlDecoder.Decode(&controller)
+			if err != nil {
+				fmt.Printf("error: %s", err)
+			}
+			fmt.Printf("deployment: %v\n", deployment)
+			fmt.Printf("deployment spec labels: %v", deployment.Spec.Template.Labels)
+
+			fmt.Printf("rep: %v\n", rep)
+			fmt.Printf("rep spec labels: %v", rep.Spec.Template.Labels)
+
+			fmt.Printf("controller: %v\n", rep)
+			fmt.Printf("controller spec labels: %v", controller.Spec.Template.Labels)
 		}
 
 		if dstK8sYaml != "" {
@@ -164,7 +194,7 @@ func init() {
 	policyTraceCmd.Flags().StringVarP(&srcK8sPod, "src-k8s-pod", "", "", "Source k8s pod ([namespace:]podname)")
 	policyTraceCmd.Flags().StringVarP(&dstK8sPod, "dst-k8s-pod", "", "", "Destination k8s pod ([namespace:]podname)")
 	policyTraceCmd.Flags().StringVarP(&srcK8sYaml, "src-k8s-yaml", "", "", "Path to YAML file for source")
-	policyTraceCmd.Flags().StringVarP(&dstK8sYaml, "src-k8s-yaml", "", "", "Path to YAML file for destination")
+	policyTraceCmd.Flags().StringVarP(&dstK8sYaml, "dst-k8s-yaml", "", "", "Path to YAML file for destination")
 }
 
 func appendIdentityLabelsToSlice(secID string, labelSlice []string) []string {
