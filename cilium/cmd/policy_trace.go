@@ -30,8 +30,9 @@ import (
 	"github.com/spf13/cobra"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
-	"k8s.io/client-go/pkg/api/v1"
+	//"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	//"k8s.io/client-go/pkg/api/v1"
+	//"reflect"
 )
 
 const (
@@ -121,47 +122,13 @@ dports can be can be for example: 80/tcp, 53 or 23/udp.`,
 		}
 
 		if srcK8sYaml != "" {
-			reader, err := os.Open(srcK8sYaml)
-			defer reader.Close()
-			if err != nil {
-				Fatalf("%s", err)
-			}
-			// TODO: What to use for buffer size?
-			//yamlDecoder := yaml.NewYAMLOrJSONDecoder(reader,512*1024).Decode()
-			//yamlDecoder := yaml.NewYAMLToJSONDecoder(reader)
-			yamlDecoder := yaml.NewDocumentDecoder(reader)
-			//yamlDecoder.
-			// Make the compiler happy
-			//fmt.Printf("yamlDecoder: %v", yamlDecoder)
-
-			splitReader := yamlDecoder.Read()
-			var deployment v1beta1.Deployment
-			var rep v1beta1.ReplicaSet
-			var controller v1.ReplicationController
-			err = yamlDecoder.Decode(&deployment)
-			if err != nil {
-				fmt.Printf("error: %s", err)
-			}
-			err = yamlDecoder.Decode(&rep)
-			if err != nil {
-				fmt.Printf("error: %s", err)
-			}
-			err = yamlDecoder.Decode(&controller)
-			if err != nil {
-				fmt.Printf("error: %s", err)
-			}
-			fmt.Printf("deployment: %v\n", deployment)
-			fmt.Printf("deployment spec labels: %v", deployment.Spec.Template.Labels)
-
-			fmt.Printf("rep: %v\n", rep)
-			fmt.Printf("rep spec labels: %v", rep.Spec.Template.Labels)
-
-			fmt.Printf("controller: %v\n", rep)
-			fmt.Printf("controller spec labels: %v", controller.Spec.Template.Labels)
+			srcYamlLabels := getLabelsFromYaml(srcK8sYaml)
+			srcSlice = append(srcSlice, srcYamlLabels...)
 		}
 
 		if dstK8sYaml != "" {
-
+			dstYamlLabels := getLabelsFromYaml(dstK8sYaml)
+			dstSlice = append(dstSlice, dstYamlLabels...)
 		}
 
 		search := models.IdentityContext{
@@ -179,6 +146,88 @@ dports can be can be for example: 80/tcp, 53 or 23/udp.`,
 			fmt.Printf("Verdict: %s\n", scr.Payload.Verdict)
 		}
 	},
+}
+
+func getLabelsFromYaml(file string) []string {
+	reader, err := os.Open(file)
+	defer reader.Close()
+	if err != nil {
+		Fatalf("%s", err)
+	}
+	// TODO: What to use for buffer size?
+	//yamlDecoder := yaml.NewYAMLOrJSONDecoder(reader,512*1024).Decode()
+	yamlDecoder := yaml.NewYAMLToJSONDecoder(reader)
+	//yamlDecoder := yaml.NewDocumentDecoder(reader)
+	//yamlDecoder.
+	// Make the compiler happy
+	//fmt.Printf("yamlDecoder: %v", yamlDecoder)
+
+	//splitReader := yamlDecoder.Read()
+	//var deployment v1beta1.Deployment
+	//var rep v1beta1.ReplicaSet
+	//var controller v1.ReplicationController
+
+	var yamlData interface{}
+	err = yamlDecoder.Decode(&yamlData)
+	if err != nil {
+		Fatalf("error decoding file %s: %s", file err)
+	}
+
+	/*err = yamlDecoder.Decode(&rep)
+	if err != nil {
+		fmt.Printf("error: %s", err)
+	}
+	err = yamlDecoder.Decode(&controller)
+	if err != nil {
+		fmt.Printf("error: %s", err)
+	}*/
+	//fmt.Printf("deployment: %v\n", yamlData)
+	//fmt.Printf("\n\n\n\n\n")
+
+	m := yamlData.(map[string]interface{})
+	lbls := parseYaml(m, []string{})
+	fmt.Printf("labels: %v\n", lbls)
+	return lbls
+	/*for _, v := range lbls {
+		fmt.Printf("label: %v\n", v)
+	}*/
+	/*fmt.Printf("deployment spec labels: %v", deployment.Spec.Template.Labels)
+
+	fmt.Printf("rep: %v\n", rep)
+	fmt.Printf("rep spec labels: %v", rep.Spec.Template.Labels)
+
+	fmt.Printf("controller: %v\n", rep)
+	fmt.Printf("controller spec labels: %v", controller.Spec.Template.Labels)*/
+}
+
+func parseYaml(yamlData map[string]interface{}, lbls []string) []string {
+	for k, v := range yamlData {
+		if k == "kind" {
+			vStr := v.(string)
+			if !(vStr == "Deployment" || vStr == "ReplicationController" || vStr == "ReplicationSet") {
+				Fatalf("please provide a YAML of a Deployment, ReplicationController, or ReplicationSet")
+			}
+		}
+		if k == "labels" {
+			//fmt.Println("============= LABELS BELOW ==============")
+			//defer fmt.Println("==================== LABELS COMPLETE ==============")
+			labels := v.(map[string]interface{})
+			for u, w := range labels {
+				ww := w.(string)
+				//fmt.Printf("Label: %v --> %v\n", u, ww)
+				lbls = append(lbls, fmt.Sprintf("%v:%v", u, ww))
+			}
+			return lbls
+		}
+		//fmt.Printf("key: %v ---> value: %v\n", k, v)
+		//fmt.Println(v, " has type ", reflect.TypeOf(v))
+		switch vv := v.(type) {
+		case map[string]interface{}:
+			//fmt.Println(v, "is a map, calling parseYaml")
+			lbls = parseYaml(vv, lbls)
+		}
+	}
+	return lbls
 }
 
 func init() {
