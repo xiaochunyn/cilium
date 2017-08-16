@@ -26,20 +26,18 @@ import (
 	"github.com/cilium/cilium/pkg/endpoint"
 	"github.com/cilium/cilium/pkg/k8s"
 	"github.com/cilium/cilium/pkg/policy"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"github.com/spf13/cobra"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"os"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/pkg/api/v1"
-	//"reflect"
+	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
+	"os"
 	"github.com/cilium/cilium/pkg/labels"
 )
 
 const (
 	defaultSecurityID = -1
 )
-
 
 var src, dst, dports []string
 var srcIdentity, dstIdentity int64
@@ -243,7 +241,7 @@ func parseYaml(fileName string, yamlData map[string]interface{}) []string {
 			}
 			lbls = append(lbls, fmt.Sprintf("%v:io.kubernetes.pod.namespace=%v", labels.LabelSourceK8s, ns))
 
-			for k, v := range  rep.Spec.Template.Labels  {
+			for k, v := range rep.Spec.Template.Labels {
 				lbls = append(lbls, fmt.Sprintf("%v:%v=%v", labels.LabelSourceK8s, k, v))
 			}
 		default:
